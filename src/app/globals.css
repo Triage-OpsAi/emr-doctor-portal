@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --ink: #0d1113;
+  --ink-elevated: #161b1e;
+  --ink-panel: #1a2023;
+  --paper: #f4f7f6;
+  --paper-panel: #ffffff;
+  --border: #293134;
+  --text: #e8eeee;
+  --muted: #93a0a1;
+  --faint: #5f6c6e;
+  --teal: #2baf9e;
+  --teal-soft: rgba(43, 175, 158, 0.12);
+  --signal: #3e6ff2;
+  --danger: #e5595b;
+  --shadow: rgba(0, 0, 0, 0.28);
+}
+
+[data-theme="light"] {
+  --ink: #f4f7f6;
+  --ink-elevated: #ffffff;
+  --ink-panel: #edf2f1;
+  --paper: #0d1113;
+  --paper-panel: #161b1e;
+  --border: #dce4e2;
+  --text: #101617;
+  --muted: #5b6b6c;
+  --faint: #879394;
+  --teal-soft: rgba(43, 175, 158, 0.1);
+  --shadow: rgba(26, 38, 37, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+  border-color: var(--border);
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text);
+  background: var(--ink);
+  font-family: var(--font-geist-sans), Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.font-display {
+  font-family: Georgia, "Times New Roman", serif;
+}
+
+.font-mono {
+  font-family: var(--font-geist-mono), "IBM Plex Mono", monospace;
+}
+
+.focus-ring:focus-visible {
+  outline: 2px solid var(--signal);
+  outline-offset: 2px;
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(.92); opacity: .7; }
+  70% { transform: scale(1.2); opacity: 0; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+
+@keyframes equalize {
+  0%, 100% { height: 25%; }
+  50% { height: 95%; }
+}
