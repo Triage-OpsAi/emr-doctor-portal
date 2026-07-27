@@ -5,10 +5,19 @@ import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { Icon, IconName } from "@/components/Icon";
 import { apiFetch, clearTokens, hasSession } from "@/lib/api";
+import {
+  AUDIT_EVENT_LABELS,
+  AUDIT_EVENTS,
+  REQUIRED_AUDIT_EVENT_IDS,
+  flushAuditQueue,
+  queueAuditEvent,
+  startAuditRetryService,
+} from "@/lib/audit";
 import type {
   ClinicalInvitation,
   ClinicalRole,
   ClinicalUser,
+  AuditEventList,
   NetworkHospital,
   PatientChart,
   PatientDashboardRecord,
@@ -20,13 +29,14 @@ import type {
   Workspace,
 } from "@/lib/types";
 
-type Tab = "home" | "users" | "network" | "library" | "settings";
+type Tab = "home" | "users" | "network" | "library" | "audit" | "settings";
 
 const NAV: { id: Tab; label: string; icon: IconName; permission?: string }[] = [
   { id: "home", label: "Home", icon: "home" },
   { id: "users", label: "Users", icon: "users", permission: "users:manage" },
   { id: "network", label: "My Network", icon: "network", permission: "network:manage" },
   { id: "library", label: "EHR Library", icon: "library" },
+  { id: "audit", label: "Audit Trail", icon: "shield" },
   { id: "settings", label: "Settings", icon: "settings" },
 ];
 
@@ -81,7 +91,18 @@ function StatusPill({ status }: { status: string }) {
         : status === "registering_patient"
           ? "text-amber-500 bg-amber-500/10"
         : "text-[var(--muted)] bg-[var(--ink-panel)]";
-  return <span className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase ${color}`}>{status.replaceAll("_", " ")}</span>;
+  const labels: Record<string, string> = {
+    queued: "In progress",
+    processing: "In progress",
+    transcribing: "In progress",
+    generating_summary: "In progress",
+    generating_pdf: "In progress",
+    registering_patient: "In progress",
+    pending_review: "Needs review",
+    synced_to_emr: "Synced",
+    needs_attention: "Needs attention",
+  };
+  return <span className={`rounded-full px-2.5 py-1 font-mono text-[10px] uppercase ${color}`}>{labels[status] || status.replaceAll("_", " ")}</span>;
 }
 
 function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: () => void }) {
@@ -96,12 +117,11 @@ function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: (
     <Modal title="Electronic medical record" subtitle={record ? `Record ${record.id.slice(0, 8).toUpperCase()}` : "Loading record…"} onClose={onClose} wide>
       <div className="p-6">
         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
-        {!record && !error && <p className="py-16 text-center text-sm text-[var(--muted)]">Retrieving clinical record…</p>}
+        {!record && !error && <p className="py-16 text-center text-sm text-[var(--muted)]">Loading record…</p>}
         {record && (
           <div className="space-y-6">
             <div className="flex flex-wrap items-center gap-3">
               <StatusPill status={record.status} />
-              <span className="font-mono text-xs text-[var(--faint)]">{record.source_language}</span>
             </div>
             {record.structured_note ? (
               <div className="grid gap-4 md:grid-cols-2">
@@ -119,7 +139,7 @@ function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: (
                 ))}
               </div>
             ) : (
-              <p className="rounded-xl border p-4 text-sm text-[var(--muted)]">Structured note is still being prepared.</p>
+              <p className="rounded-xl border p-4 text-sm text-[var(--muted)]">The note is not ready yet.</p>
             )}
             {record.suggested_codes.length > 0 && (
               <section>
@@ -135,7 +155,7 @@ function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: (
             )}
             {(record.translated_text || record.raw_transcript) && (
               <details className="rounded-xl border bg-[var(--ink)]">
-                <summary className="cursor-pointer p-4 text-sm font-medium">Original transcription</summary>
+                <summary className="cursor-pointer p-4 text-sm font-medium">Recording transcript</summary>
                 <p className="border-t p-4 text-sm leading-6 text-[var(--muted)]">{record.translated_text || record.raw_transcript}</p>
               </details>
             )}
@@ -148,6 +168,7 @@ function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: (
 
 export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose: () => void; onQueued: () => void; patientId?: string }) {
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [audio, setAudio] = useState<Blob | null>(null);
   const [result, setResult] = useState<VoiceIntakeResult | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -188,16 +209,37 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
       setElapsed(0);
       timer.current = setInterval(() => setElapsed((value) => value + 1), 1000);
       setRecording(true);
+      setPaused(false);
+      queueAuditEvent({ action: AUDIT_EVENTS.AUDIO_CAPTURE_STARTED, resource_type: "encounter_audio", patient_id: patientId || null });
     } catch {
       setError("Microphone access is required to record the patient intake.");
     }
   }
 
   function stopRecording() {
-    if (mediaRecorder.current?.state === "recording") mediaRecorder.current.stop();
+    if (["recording", "paused"].includes(mediaRecorder.current?.state || "")) mediaRecorder.current?.stop();
     if (timer.current) clearInterval(timer.current);
     timer.current = null;
     setRecording(false);
+    setPaused(false);
+    queueAuditEvent({ action: AUDIT_EVENTS.AUDIO_CAPTURE_STOPPED, resource_type: "encounter_audio", patient_id: patientId || null, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  function pauseRecording() {
+    if (mediaRecorder.current?.state !== "recording") return;
+    mediaRecorder.current.pause();
+    if (timer.current) clearInterval(timer.current);
+    timer.current = null;
+    setPaused(true);
+    queueAuditEvent({ action: "audio.paused", resource_type: "encounter_audio", patient_id: patientId || null, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  function resumeRecording() {
+    if (mediaRecorder.current?.state !== "paused") return;
+    mediaRecorder.current.resume();
+    timer.current = setInterval(() => setElapsed((value) => value + 1), 1000);
+    setPaused(false);
+    queueAuditEvent({ action: "audio.resumed", resource_type: "encounter_audio", patient_id: patientId || null, event_metadata: { duration_seconds: elapsed } });
   }
 
   async function restartRecording() {
@@ -215,31 +257,31 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
     }
     setSubmitting(true);
     setError("");
-    const form = new FormData(event.currentTarget);
     const contentType = (audio.type || "audio/webm").split(";", 1)[0].trim();
 
     try {
-      setUploadStage("Preparing secure upload…");
+      setUploadStage("Saving recording…");
       const job = await apiFetch<VoiceJobUpload>("/emr/voice-jobs", {
         method: "POST",
         body: JSON.stringify({
           content_type: contentType,
           file_size: audio.size,
-          language_code: String(form.get("language_code") || "unknown"),
-          department: form.get("department") || null,
+          language_code: "unknown",
+          department: null,
           patient_id: patientId || null,
         }),
       });
-      setUploadStage("Uploading recording…");
+      setUploadStage("Saving recording…");
       const uploadResponse = await fetch(job.upload_url, {
         method: "PUT",
         headers: { "Content-Type": job.content_type },
         body: audio,
       });
       if (!uploadResponse.ok) {
-        throw new Error(`Audio upload failed (${uploadResponse.status}). Your recording is still saved.`);
+        throw new Error("The recording could not be saved. Your recording is still available.");
       }
-      setUploadStage(patientId ? "Starting encounter processing…" : "Starting patient registration…");
+      queueAuditEvent({ action: "audio.uploaded", resource_type: "voice_job", resource_id: job.job_id, patient_id: patientId || null, outcome: "queued", event_metadata: { bytes: audio.size } });
+      setUploadStage(patientId ? "Adding encounter…" : "Creating patient…");
       await apiFetch<VoiceJob>(`/emr/voice-jobs/${job.job_id}/complete`, {
         method: "POST",
         body: JSON.stringify({ etag: uploadResponse.headers.get("etag") }),
@@ -247,6 +289,7 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
       onQueued();
       onClose();
     } catch (reason) {
+      queueAuditEvent({ action: "delivery.retry_required", resource_type: "encounter_audio", patient_id: patientId || null, outcome: "failure", event_metadata: { reason: reason instanceof Error ? reason.message : "upload_failed" } });
       setError(reason instanceof Error ? reason.message : "Unable to upload the recording");
     } finally {
       setSubmitting(false);
@@ -259,7 +302,6 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
   return (
     <Modal
       title={patientId ? "Record new encounter" : "Voice patient intake"}
-      subtitle={patientId ? "Record this encounter; the existing voice workers will transcribe it and add the structured note to this patient’s EMR." : "Create the patient and clinical record directly from your dictation."}
       onClose={onClose}
     >
       {result ? (
@@ -272,7 +314,7 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
               <div>
                 <p className="font-medium text-[var(--teal)]">Patient record ready</p>
                 <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                  {result.patient.created ? "A new patient was created" : "The existing patient was matched"} and the EMR is waiting for doctor review.
+                  {result.patient.created ? "A new patient was created" : "The patient record was updated"}. The note is ready for review.
                 </p>
               </div>
             </div>
@@ -310,40 +352,11 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
           {error && (
             <div role="alert" className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">
               <p>{error}</p>
-              {audio && <p className="mt-1 text-xs text-[var(--muted)]">Your recording is still saved. Retry it below or restart the recording.</p>}
+              {audio && <p className="mt-1 text-xs text-[var(--muted)]">Your recording is still available.</p>}
             </div>
           )}
-          <div className="rounded-xl border border-[var(--teal)]/25 bg-[var(--teal-soft)] p-4">
-            <p className="text-sm font-medium text-[var(--teal)]">What to say</p>
-            <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
-              {patientId ? "Describe the current complaint, findings, assessment, treatment, medications, and follow-up plan." : "Begin with the patient's full name and age. Then say their patient ID, gender, phone number and clinical details when available."}
-            </p>
-            <p className="mt-2 font-mono text-[11px] leading-5 text-[var(--faint)]">
-              “Patient Ananya Rao, age 34, patient ID MRN 4821. She reports…”
-            </p>
-          </div>
-          <div className="mt-5 grid gap-4 sm:grid-cols-2">
-            <label>
-              <span className="mb-2 block text-xs text-[var(--muted)]">Department</span>
-              <input name="department" className={inputClass} placeholder="Optional override" />
-            </label>
-            <label>
-              <span className="mb-2 block text-xs text-[var(--muted)]">Dictation language</span>
-              <select name="language_code" className={inputClass}>
-                <option value="unknown">Detect automatically</option>
-                <option value="en-IN">English</option>
-                <option value="hi-IN">Hindi</option>
-                <option value="kn-IN">Kannada</option>
-                <option value="te-IN">Telugu</option>
-                <option value="ta-IN">Tamil</option>
-                <option value="ml-IN">Malayalam</option>
-                <option value="mr-IN">Marathi</option>
-                <option value="bn-IN">Bengali</option>
-              </select>
-            </label>
-          </div>
-          <div className="mt-6 rounded-2xl border bg-[var(--ink)] p-6 text-center">
-            <p className="font-mono text-xs text-[var(--faint)]">{recording ? time : audio ? "Recording ready" : "Ready to record"}</p>
+          <div className="rounded-2xl border bg-[var(--ink)] p-6 text-center">
+            <p className="font-mono text-xs text-[var(--faint)]">{recording ? `${paused ? "Paused" : "Recording"} ${time}` : audio ? "Recording ready" : "Ready to record"}</p>
             <div className="relative mx-auto mt-4 grid h-20 w-20 place-items-center">
               {recording && <span className="absolute inset-0 rounded-full border border-[var(--teal)] animate-[pulse-ring_1.4s_ease-out_infinite]" />}
               <button
@@ -356,16 +369,18 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
                 {recording ? <span className="h-5 w-5 rounded-sm bg-white" /> : <Icon name="mic" size={25} />}
               </button>
             </div>
-            <p className="mt-4 text-xs text-[var(--muted)]">
-              {recording ? "Listening… stop when the patient details and clinical notes are complete." : audio ? "Recording saved and ready to process." : "Start recording, then speak the patient details and clinical notes."}
-            </p>
           </div>
           <div className="mt-6 flex flex-wrap justify-end gap-3">
             <button type="button" onClick={onClose} className={buttonSecondary}>Cancel</button>
             {recording ? (
-              <button type="button" onClick={stopRecording} className={buttonPrimary}>
-                <span className="h-3 w-3 rounded-sm bg-current" /> Stop recording
-              </button>
+              <>
+                <button type="button" onClick={paused ? resumeRecording : pauseRecording} className={buttonSecondary}>
+                  <span className="font-bold">{paused ? "▶" : "Ⅱ"}</span> {paused ? "Resume" : "Pause"}
+                </button>
+                <button type="button" onClick={stopRecording} className={buttonPrimary}>
+                  <span className="h-3 w-3 rounded-sm bg-current" /> Stop recording
+                </button>
+              </>
             ) : audio ? (
               <>
                 <button type="button" onClick={restartRecording} disabled={submitting} className={buttonSecondary}>
@@ -373,7 +388,7 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
                 </button>
                 <button disabled={submitting} className={buttonPrimary}>
                   <Icon name="activity" size={16} />
-                  {submitting ? uploadStage || "Uploading…" : error ? "Retry upload" : patientId ? "Upload & process encounter" : "Upload & register patient"}
+                  {submitting ? uploadStage || "Saving…" : error ? "Try again" : patientId ? "Add encounter" : "Create patient"}
                 </button>
               </>
             ) : (
@@ -422,7 +437,7 @@ export function ReportUploadModal({
             ? "application/msword"
             : "application/octet-stream")
       ).split(";", 1)[0];
-      setStage("Preparing secure upload…");
+      setStage("Saving report…");
       const upload = await apiFetch<ReportUpload>(`/patients/${patientId}/reports`, {
         method: "POST",
         body: JSON.stringify({
@@ -432,14 +447,14 @@ export function ReportUploadModal({
           capture_source: captureSource,
         }),
       });
-      setStage("Uploading report…");
+      setStage("Saving report…");
       const response = await fetch(upload.upload_url, {
         method: "PUT",
         headers: { "Content-Type": upload.content_type },
         body: file,
       });
-      if (!response.ok) throw new Error(`Report upload failed (${response.status}).`);
-      setStage("Starting report review…");
+      if (!response.ok) throw new Error("The report could not be saved.");
+      setStage("Finishing…");
       await apiFetch(`/patients/${patientId}/reports/${upload.report_id}/complete`, {
         method: "POST",
         body: JSON.stringify({ etag: response.headers.get("etag") }),
@@ -485,7 +500,7 @@ export function ReportUploadModal({
           </div>
         )}
         <p className="rounded-lg bg-amber-500/10 p-3 text-xs leading-5 text-amber-600">
-          PDF and Word documents are supported. For photos, use a flat, well-lit image with all four corners visible. If text cannot be read reliably, the chart will ask you to take the picture again. AI summarizes report text only; it does not diagnose CT/MRI/X-ray imagery.
+          PDF and Word documents are supported. For photos, use a flat, well-lit image with all four corners visible.
         </p>
         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-[var(--danger)]">{error}</p>}
         <div className="flex justify-end gap-3">
@@ -660,7 +675,7 @@ export function PatientChartPanel({
         </div>
       </div>
 
-      {audioUrl && <div className="rounded-xl border bg-[var(--ink-elevated)] p-4"><p className="mb-3 font-mono text-[10px] uppercase text-[var(--teal)]">Original consultation recording · temporary private link</p><audio controls autoPlay src={audioUrl} className="w-full" /></div>}
+      {audioUrl && <div className="rounded-xl border bg-[var(--ink-elevated)] p-4"><p className="mb-3 font-mono text-[10px] uppercase text-[var(--teal)]">Consultation recording</p><audio controls autoPlay src={audioUrl} className="w-full" /></div>}
       {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-[var(--danger)]">{error}</p>}
       {loading && <p className="py-8 text-center text-sm text-[var(--muted)]">Loading complete patient chart…</p>}
 
@@ -668,14 +683,14 @@ export function PatientChartPanel({
         <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
           <div className="space-y-5">
             <section className="rounded-xl border bg-[var(--ink-elevated)]">
-              <div className="flex items-center justify-between border-b p-4"><div><h3 className="font-display font-semibold">Clinical records</h3><p className="mt-1 text-xs text-[var(--muted)]">Longitudinal visits and structured EMR notes</p></div><span className="font-mono text-xs text-[var(--faint)]">{chart.records.length} records</span></div>
+              <div className="flex items-center justify-between border-b p-4"><h3 className="font-display font-semibold">Clinical records</h3><span className="font-mono text-xs text-[var(--faint)]">{chart.records.length} records</span></div>
               <div className="divide-y">
                 {chart.records.map((clinicalRecord) => {
                   const note = clinicalRecord.structured_note;
                   return (
                     <article key={clinicalRecord.id} className="p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div><p className="font-medium">{note?.chief_complaint || "Clinical consultation"}</p><p className="mt-1 text-xs text-[var(--faint)]">{new Date(clinicalRecord.created_at).toLocaleString()} · {clinicalRecord.source_language}</p></div>
+                        <div><p className="font-medium">{note?.chief_complaint || "Clinical consultation"}</p><p className="mt-1 text-xs text-[var(--faint)]">{new Date(clinicalRecord.created_at).toLocaleString()}</p></div>
                         <div className="flex gap-2"><StatusPill status={clinicalRecord.status} />{clinicalRecord.audio_available && <button onClick={() => listen(clinicalRecord.id)} className="focus-ring rounded-md border p-1.5 text-[var(--teal)]" aria-label="Listen to this visit"><Icon name="play" size={14} /></button>}<button onClick={() => openRecord(clinicalRecord.id)} className="focus-ring rounded-md border px-2 py-1 text-xs">Full EMR</button></div>
                       </div>
                       {note && <div className="mt-4 grid gap-3 sm:grid-cols-2">{[["Subjective", note.subjective], ["Objective", note.objective], ["Assessment", note.assessment], ["Plan", note.plan]].map(([label, value]) => <div key={label} className="rounded-lg bg-[var(--ink)] p-3"><p className="font-mono text-[9px] uppercase tracking-wide text-[var(--teal)]">{label}</p><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-[var(--muted)]">{value || "Not documented"}</p></div>)}</div>}
@@ -687,14 +702,14 @@ export function PatientChartPanel({
             </section>
 
             <section className="rounded-xl border bg-[var(--ink-elevated)]">
-              <div className="flex items-center justify-between border-b p-4"><div><h3 className="font-display font-semibold">Reports & investigations</h3><p className="mt-1 text-xs text-[var(--muted)]">AI-assisted document summaries for clinician review</p></div><button onClick={() => setAction("report")} className={buttonSecondary}><Icon name="upload" size={13} /> Upload</button></div>
+              <div className="flex items-center justify-between border-b p-4"><h3 className="font-display font-semibold">Reports & investigations</h3><button onClick={() => setAction("report")} className={buttonSecondary}><Icon name="upload" size={13} /> Upload</button></div>
               <div className="divide-y">
                 {chart.reports.map((report) => (
                   <article key={report.id} className="p-4">
                     <div className="flex flex-wrap items-start justify-between gap-2"><div><p className="font-medium">{report.title}</p><p className="mt-1 text-xs text-[var(--faint)]">{report.document_type || "Clinical document"} · {new Date(report.created_at).toLocaleString()}</p></div><StatusPill status={report.status} /></div>
-                    {["queued", "processing"].includes(report.status) && <p className="mt-3 text-xs text-[var(--muted)]">Extracting report details in the background…</p>}
+                    {["queued", "processing"].includes(report.status) && <p className="mt-3 text-xs text-[var(--muted)]">Preparing report…</p>}
                     {report.status === "needs_reupload" && <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3"><p className="text-xs font-semibold text-amber-600">Photo is not clear enough. Please click the picture again.</p><p className="mt-1 text-xs text-amber-600/80">{report.quality_message}</p><button onClick={() => setAction("report")} className="mt-3 rounded-md border border-amber-500/40 px-3 py-1.5 text-xs text-amber-700">Take a clearer picture</button></div>}
-                    {report.status === "failed" && <p className="mt-3 rounded-lg bg-red-500/10 p-3 text-xs text-[var(--danger)]">{report.quality_message || "Report processing failed."}</p>}
+                    {report.status === "failed" && <p className="mt-3 rounded-lg bg-red-500/10 p-3 text-xs text-[var(--danger)]">{report.quality_message || "The report could not be prepared."}</p>}
                     {report.summary && <div className="mt-3"><p className="text-sm leading-6 text-[var(--muted)]">{report.summary}</p>{report.key_findings.length > 0 && <ul className="mt-3 space-y-1">{report.key_findings.map((finding) => <li key={finding} className="flex gap-2 text-xs"><span className="text-[var(--teal)]">•</span>{finding}</li>)}</ul>}</div>}
                   </article>
                 ))}
@@ -704,7 +719,7 @@ export function PatientChartPanel({
           </div>
 
           <section className="self-start rounded-xl border bg-[var(--ink-elevated)]">
-            <div className="flex items-center justify-between border-b p-4"><div><h3 className="font-display font-semibold">Medication orders</h3><p className="mt-1 text-xs text-[var(--muted)]">Current longitudinal list</p></div><button onClick={() => setAction("medication")} className={buttonSecondary}><Icon name="plus" size={13} /> Add</button></div>
+            <div className="flex items-center justify-between border-b p-4"><h3 className="font-display font-semibold">Medication orders</h3><button onClick={() => setAction("medication")} className={buttonSecondary}><Icon name="plus" size={13} /> Add</button></div>
             <div className="divide-y">
               {chart.medications.map((medication, index) => <div key={medication.id} className="grid grid-cols-[28px_1fr] gap-2 p-4"><span className="font-mono text-xs text-[var(--faint)]">{index + 1}</span><div><div className="flex items-center justify-between gap-2"><p className="text-sm font-medium">{medication.name}</p><span className="rounded-full bg-[var(--teal-soft)] px-2 py-0.5 text-[9px] uppercase text-[var(--teal)]">{medication.is_active ? "Active" : "Stopped"}</span></div><p className="mt-1 text-xs text-[var(--muted)]">{[medication.dosage, medication.route, medication.frequency, medication.duration].filter(Boolean).join(" · ") || "Instructions not recorded"}</p>{medication.instructions && <p className="mt-2 text-xs leading-5 text-[var(--faint)]">{medication.instructions}</p>}</div></div>)}
               {!chart.medications.length && <p className="p-6 text-sm text-[var(--muted)]">No medication orders added.</p>}
@@ -761,13 +776,13 @@ function Dashboard({
       encounter_number: null,
       ward_number: null,
       bed_number: null,
-      patient_name: job.status === "failed" ? "Voice intake needs attention" : "Registering patient",
+      patient_name: job.status === "failed" ? "Recording needs attention" : "New patient",
       patient_reference: "—",
       serial_number: index + 1,
       age: null,
       gender: null,
       phone: null,
-      subject: job.error_message || "Patient details are being prepared from the recording.",
+      subject: job.error_message || "Preparing patient details…",
       doctor_name: workspace.current_user.full_name,
       nurses: [],
       status: job.status === "failed" ? "needs_attention" : "registering_patient",
@@ -784,7 +799,6 @@ function Dashboard({
         <div>
           <p className="font-mono text-[10px] uppercase tracking-[.18em] text-[var(--teal)]">Clinical overview</p>
           <h1 className="font-display mt-1 text-2xl font-semibold">Good day, {workspace.current_user.full_name.split(" ")[0]}</h1>
-          <p className="mt-1 text-sm text-[var(--muted)]">Here is what is happening across {workspace.organization.name}.</p>
         </div>
         <button onClick={() => setRecordModal(true)} className={buttonPrimary}>
           <Icon name="mic" size={17} /> Voice Patient Intake
@@ -793,33 +807,29 @@ function Dashboard({
       <main className="space-y-6 p-5 md:p-8">
         {notice && (
           <div className="flex items-center justify-between rounded-lg border border-[var(--teal)]/30 bg-[var(--teal-soft)] p-3 text-sm text-[var(--teal)]">
-            <span>Recording uploaded successfully. Patient registration has started.</span>
+            <span>Recording saved. The patient record is being prepared.</span>
             <button onClick={() => setNotice("")} className="focus-ring rounded p-1" aria-label="Dismiss message"><Icon name="close" size={14} /></button>
           </div>
         )}
         <section className="grid gap-4 sm:grid-cols-3">
           {[
-            ["Total patients", records.length, "users", "Everyone in the patient registry"],
-            ["Pending review", pending, "activity", "Needs doctor attention"],
-            ["Approved", approved, "shield", "Clinically verified"],
-          ].map(([label, value, icon, note]) => (
+            ["Total patients", records.length, "users"],
+            ["Pending review", pending, "activity"],
+            ["Approved", approved, "shield"],
+          ].map(([label, value, icon]) => (
             <div key={String(label)} className="rounded-xl border bg-[var(--ink-elevated)] p-5 shadow-[0_8px_30px_var(--shadow)]">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[var(--muted)]">{label}</span>
                 <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name={icon as IconName} size={16} /></span>
               </div>
               <p className="font-display mt-4 text-3xl">{value}</p>
-              <p className="mt-1 text-xs text-[var(--faint)]">{note}</p>
             </div>
           ))}
         </section>
 
         <section className="overflow-hidden rounded-xl border bg-[var(--ink-elevated)] shadow-[0_8px_30px_var(--shadow)]">
           <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-display font-semibold">Patient records</h2>
-              <p className="mt-1 text-xs text-[var(--muted)]">Every registered patient, with their latest EMR when available.</p>
-            </div>
+            <h2 className="font-display font-semibold">Patient records</h2>
             <button onClick={refresh} className={buttonSecondary}><Icon name="refresh" size={14} /> Refresh</button>
           </div>
           {error && <p className="m-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
@@ -840,7 +850,7 @@ function Dashboard({
                 {loading ? (
                   <tr><td colSpan={7} className="p-10 text-center text-sm text-[var(--muted)]">Loading patient records…</td></tr>
                 ) : displayedRecords.length === 0 ? (
-                  <tr><td colSpan={7} className="p-12 text-center"><Icon name="file" size={28} className="mx-auto text-[var(--faint)]" /><p className="mt-3 text-sm">No patients yet</p><p className="mt-1 text-xs text-[var(--muted)]">Create your first patient using voice intake.</p></td></tr>
+                  <tr><td colSpan={7} className="p-12 text-center"><Icon name="file" size={28} className="mx-auto text-[var(--faint)]" /><p className="mt-3 text-sm">No patients yet</p></td></tr>
                 ) : displayedRecords.map((record) => (
                   <Fragment key={record.id}>
                     <tr className="border-b text-sm hover:bg-[var(--ink-panel)]">
@@ -858,7 +868,16 @@ function Dashboard({
                       <td className="px-3 py-4 font-mono text-xs text-[var(--muted)]">{record.patient_reference}</td>
                       <td className="px-3 py-4">{record.age ?? "—"}</td>
                       <td className="max-w-xs truncate px-3 py-4 text-[var(--muted)]">{record.subject}</td>
-                      <td className="px-3 py-4"><StatusPill status={record.status} /></td>
+                      <td className="px-3 py-4">
+                        {record.id.startsWith("job-") ? <StatusPill status={record.status} /> : (
+                          <div className="min-w-28">
+                            <p className="text-xs font-semibold text-[var(--teal)]">Approved {record.approval_percentage || 0}%</p>
+                            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--ink-panel)]">
+                              <div className="h-full rounded-full bg-[var(--teal)]" style={{ width: `${record.approval_percentage || 0}%` }} />
+                            </div>
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   </Fragment>
                 ))}
@@ -895,7 +914,7 @@ function SettingsPage({ workspace }: { workspace: Workspace }) {
   ];
   return (
     <>
-      <PageHeader eyebrow="Organisation settings" title="Workspace details" subtitle="This information is controlled by the HealthAI platform administrator and cannot be edited here." />
+      <PageHeader eyebrow="Organisation settings" title="Workspace details" />
       <main className="p-5 md:p-8">
         <div className="max-w-4xl overflow-hidden rounded-xl border bg-[var(--ink-elevated)]">
           <div className="flex items-center gap-3 border-b p-5">
@@ -916,10 +935,10 @@ function SettingsPage({ workspace }: { workspace: Workspace }) {
   );
 }
 
-function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow: string; title: string; subtitle: string; action?: React.ReactNode }) {
+function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow: string; title: string; subtitle?: string; action?: React.ReactNode }) {
   return (
     <header className="flex flex-col gap-4 border-b px-5 py-6 md:flex-row md:items-center md:justify-between md:px-8">
-      <div><p className="font-mono text-[10px] uppercase tracking-[.18em] text-[var(--teal)]">{eyebrow}</p><h1 className="font-display mt-1 text-2xl font-semibold">{title}</h1><p className="mt-1 text-sm text-[var(--muted)]">{subtitle}</p></div>
+      <div><p className="font-mono text-[10px] uppercase tracking-[.18em] text-[var(--teal)]">{eyebrow}</p><h1 className="font-display mt-1 text-2xl font-semibold">{title}</h1>{subtitle && <p className="mt-1 text-sm text-[var(--muted)]">{subtitle}</p>}</div>
       {action}
     </header>
   );
@@ -1058,11 +1077,11 @@ function NetworkPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Hospital chain" title="My Network" subtitle="Create and manage hospital workspaces under your organisation." action={<button onClick={() => setShowAdd(true)} className={buttonPrimary}><Icon name="plus" size={16} /> Add hospital</button>} />
+      <PageHeader eyebrow="Hospital chain" title="My Network" action={<button onClick={() => setShowAdd(true)} className={buttonPrimary}><Icon name="plus" size={16} /> Add hospital</button>} />
       <main className="p-5 md:p-8">
         {error && <p className="mb-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
         {hospitals.length === 0 ? (
-          <div className="rounded-xl border border-dashed bg-[var(--ink-elevated)] p-12 text-center"><Icon name="network" size={32} className="mx-auto text-[var(--teal)]" /><h2 className="font-display mt-4 text-xl">Build your hospital network</h2><p className="mx-auto mt-2 max-w-md text-sm text-[var(--muted)]">Add branches and locations. Each one gets its own secure workspace and owner invitations.</p><button onClick={() => setShowAdd(true)} className={`${buttonPrimary} mt-6`}><Icon name="plus" size={16} /> Add first hospital</button></div>
+          <div className="rounded-xl border border-dashed bg-[var(--ink-elevated)] p-12 text-center"><Icon name="network" size={32} className="mx-auto text-[var(--teal)]" /><h2 className="font-display mt-4 text-xl">No hospitals added</h2><button onClick={() => setShowAdd(true)} className={`${buttonPrimary} mt-6`}><Icon name="plus" size={16} /> Add hospital</button></div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{hospitals.map((hospital) => (
             <article key={hospital.id} className="rounded-xl border bg-[var(--ink-elevated)] p-5">
@@ -1075,14 +1094,13 @@ function NetworkPage() {
         )}
       </main>
       {showAdd && (
-        <Modal title="Add hospital" subtitle="A separate workspace and owner access will be created automatically." onClose={() => setShowAdd(false)}>
+        <Modal title="Add hospital" onClose={() => setShowAdd(false)}>
           <form onSubmit={create} className="grid gap-4 p-6 sm:grid-cols-2">
             <label className="sm:col-span-2"><span className="mb-2 block text-xs text-[var(--muted)]">Hospital name *</span><input name="name" required className={inputClass} placeholder="Rainbow – Banjara Hills" /></label>
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Place *</span><input name="place" required className={inputClass} placeholder="Hyderabad" /></label>
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Hospital email *</span><input name="email" type="email" required className={inputClass} /></label>
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Contact person *</span><input name="contact_name" required className={inputClass} /></label>
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Contact email *</span><input name="contact_email" type="email" required className={inputClass} /></label>
-            <p className="sm:col-span-2 rounded-lg bg-[var(--teal-soft)] p-3 text-xs text-[var(--teal)]">The workspace ID is generated from the main hospital chain and this branch name, with six-character code segments.</p>
             <div className="sm:col-span-2 flex justify-end gap-3"><button type="button" onClick={() => setShowAdd(false)} className={buttonSecondary}>Cancel</button><button className={buttonPrimary}><Icon name="building" size={15} /> Create workspace</button></div>
           </form>
         </Modal>
@@ -1094,13 +1112,153 @@ function NetworkPage() {
 function LibraryPage() {
   return (
     <>
-      <PageHeader eyebrow="Clinical resources" title="EHR Library" subtitle="A central home for record templates, coding references and clinical resources." />
+      <PageHeader eyebrow="Clinical resources" title="EHR Library" />
       <main className="p-5 md:p-8">
         <div className="rounded-xl border border-dashed bg-[var(--ink-elevated)] p-12 text-center">
           <span className="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name="library" size={27} /></span>
-          <h2 className="font-display mt-5 text-xl">EHR Library is ready for its next chapter</h2>
-          <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-[var(--muted)]">The page and navigation are in place. Templates, protocols and reusable clinical content can be added when the workflow is defined.</p>
+          <h2 className="font-display mt-5 text-xl">No resources added</h2>
         </div>
+      </main>
+    </>
+  );
+}
+
+function AuditTrailPage() {
+  const [data, setData] = useState<AuditEventList>({ events: [], total: 0 });
+  const [search, setSearch] = useState("");
+  const [outcome, setOutcome] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const canonicalCounts = useMemo(
+    () => Object.fromEntries(REQUIRED_AUDIT_EVENT_IDS.map((id) => [id, data.events.filter((event) => event.action === id).length])),
+    [data.events],
+  );
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      await flushAuditQueue();
+      const params = new URLSearchParams({ limit: "300" });
+      if (search.trim()) params.set("search", search.trim());
+      if (outcome) params.set("outcome", outcome);
+      setData(await apiFetch<AuditEventList>(`/audit/events?${params.toString()}`));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to load the audit trail.");
+    } finally {
+      setLoading(false);
+    }
+  }, [outcome, search]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => void load(), 250);
+    return () => window.clearTimeout(handle);
+  }, [load]);
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Clinical governance"
+        title="Audit Trail"
+        subtitle="Who did what, when, for which patient or encounter, and what changed."
+        action={<button onClick={() => void load()} className={buttonSecondary}><Icon name="refresh" size={14} /> Refresh</button>}
+      />
+      <main className="space-y-5 p-5 md:p-8">
+        <section className="rounded-xl border bg-[var(--ink-elevated)] p-5">
+          <h2 className="font-display font-semibold">Tracked events</h2>
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {REQUIRED_AUDIT_EVENT_IDS.map((eventId) => (
+              <button
+                type="button"
+                key={eventId}
+                onClick={() => setSearch(eventId)}
+                className="focus-ring flex items-center justify-between rounded-lg border bg-[var(--ink)] px-3 py-2.5 text-left hover:border-[var(--teal)]/50"
+              >
+                <span>
+                  <span className="block text-xs font-medium">{AUDIT_EVENT_LABELS[eventId]}</span>
+                </span>
+                <span className="ml-3 rounded-full bg-[var(--teal-soft)] px-2 py-1 font-mono text-[10px] text-[var(--teal)]">{canonicalCounts[eventId] || 0}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+        <section className="grid gap-3 rounded-xl border bg-[var(--ink-elevated)] p-4 md:grid-cols-[1fr_220px_auto]">
+          <label>
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-[var(--faint)]">Search actor, patient, action</span>
+            <div className="relative">
+              <Icon name="search" size={14} className="absolute left-3 top-3 text-[var(--faint)]" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} className={`${inputClass} pl-9`} placeholder="Search audit events…" />
+            </div>
+          </label>
+          <label>
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-[var(--faint)]">Outcome</span>
+            <select value={outcome} onChange={(event) => setOutcome(event.target.value)} className={inputClass}>
+              <option value="">All outcomes</option>
+              <option value="success">Success</option>
+              <option value="queued">In progress</option>
+              <option value="failure">Failure</option>
+              <option value="denied">Denied</option>
+            </select>
+          </label>
+          <div className="flex items-end">
+            <span className="rounded-lg bg-[var(--teal-soft)] px-4 py-3 text-xs font-semibold text-[var(--teal)]">{data.total} events</span>
+          </div>
+        </section>
+        {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
+        <section className="overflow-hidden rounded-xl border bg-[var(--ink-elevated)]">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[960px] text-left text-xs">
+              <thead className="border-b bg-[var(--ink)] text-[var(--faint)]">
+                <tr>
+                  <th className="px-4 py-3 font-semibold">When</th>
+                  <th className="px-4 py-3 font-semibold">Who</th>
+                  <th className="px-4 py-3 font-semibold">Action</th>
+                  <th className="px-4 py-3 font-semibold">Patient / encounter</th>
+                  <th className="px-4 py-3 font-semibold">Outcome</th>
+                  <th className="px-4 py-3 font-semibold">What changed / context</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {data.events.map((event) => (
+                  <tr key={event.id} className="align-top hover:bg-[var(--ink-panel)]">
+                    <td className="whitespace-nowrap px-4 py-4 text-[var(--muted)]">
+                      {new Date(event.occurred_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-4">
+                      <p className="font-medium">{event.actor_name === "System service" ? "Automated" : event.actor_name}</p>
+                      <p className="mt-1 capitalize text-[var(--faint)]">{event.actor_role === "worker" || !event.actor_role ? "Automated" : event.actor_role.replaceAll("_", " ")}</p>
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className="font-medium text-[var(--teal)]">{AUDIT_EVENT_LABELS[event.action] || event.action.replaceAll(".", " ")}</span>
+                    </td>
+                    <td className="px-4 py-4">
+                      <p>{event.patient_name || "—"}</p>
+                      {event.patient_reference && <p className="mt-1 font-mono text-[9px] text-[var(--faint)]">Patient {event.patient_reference}</p>}
+                      {event.encounter_id && <p className="mt-1 font-mono text-[9px] text-[var(--faint)]">Encounter {event.encounter_id.slice(0, 8).toUpperCase()}</p>}
+                    </td>
+                    <td className="px-4 py-4">
+                      <span className={`rounded-full px-2.5 py-1 font-mono text-[9px] uppercase ${
+                        event.outcome === "success" ? "bg-[var(--teal-soft)] text-[var(--teal)]" :
+                        event.outcome === "failure" || event.outcome === "denied" ? "bg-red-500/10 text-[var(--danger)]" :
+                        "bg-amber-500/10 text-amber-500"
+                      }`}>{event.outcome === "queued" ? "In progress" : event.outcome}</span>
+                    </td>
+                    <td className="max-w-sm px-4 py-4">
+                      {event.changes || event.event_metadata ? (
+                        <details>
+                          <summary className="cursor-pointer font-medium text-[var(--teal)]">View details</summary>
+                          <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-[var(--ink)] p-3 font-mono text-[10px] leading-5 text-[var(--muted)]">{JSON.stringify(event.changes || event.event_metadata, null, 2)}</pre>
+                        </details>
+                      ) : <span className="text-[var(--faint)]">No field-level changes</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!loading && !data.events.length && <p className="p-10 text-center text-sm text-[var(--muted)]">No audit events match these filters.</p>}
+          {loading && <p className="p-10 text-center text-sm text-[var(--muted)]">Loading audit events…</p>}
+        </section>
       </main>
     </>
   );
@@ -1157,6 +1315,8 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
     loadRecords();
   }, [clientName, loadRecords, router, workspaceId]);
 
+  useEffect(() => startAuditRetryService(), []);
+
   useEffect(() => {
     if (voiceJobs.length === 0) return;
     const poller = setInterval(() => loadRecords(true), 3000);
@@ -1168,7 +1328,9 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
     [workspace],
   );
 
-  function logout() {
+  async function logout() {
+    queueAuditEvent({ action: AUDIT_EVENTS.USER_LOGOUT, event_category: "authentication", resource_type: "session" });
+    await flushAuditQueue();
     clearTokens();
     router.replace("/login");
   }
@@ -1216,6 +1378,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
         {tab === "users" && <UsersPage />}
         {tab === "network" && <NetworkPage />}
         {tab === "library" && <LibraryPage />}
+        {tab === "audit" && <AuditTrailPage />}
         {tab === "settings" && <SettingsPage workspace={workspace} />}
       </div>
     </div>

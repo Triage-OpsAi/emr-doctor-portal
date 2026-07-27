@@ -8,6 +8,7 @@ const REFRESH_KEY = "meridian_doctor_refresh_token";
 export function storeTokens(accessToken: string, refreshToken: string) {
   localStorage.setItem(ACCESS_KEY, accessToken);
   localStorage.setItem(REFRESH_KEY, refreshToken);
+  void import("@/lib/audit").then(({ flushAuditQueue }) => flushAuditQueue());
 }
 
 export function clearTokens() {
@@ -33,6 +34,13 @@ async function refreshAccessToken() {
   }
   const tokens = await response.json();
   storeTokens(tokens.access_token, tokens.refresh_token);
+  void import("@/lib/audit").then(({ queueAuditEvent }) =>
+    queueAuditEvent({
+      action: "session.refresh",
+      event_category: "authentication",
+      resource_type: "session",
+    }),
+  );
   return tokens.access_token as string;
 }
 
@@ -52,6 +60,17 @@ export async function apiFetch<T>(
     return apiFetch<T>(path, init, false);
   }
   if (!response.ok) {
+    if (response.status === 403 && !path.startsWith("/audit/")) {
+      void import("@/lib/audit").then(({ queueAuditEvent }) =>
+        queueAuditEvent({
+          action: "permission.denied",
+          event_category: "security",
+          resource_type: "api_request",
+          outcome: "denied",
+          event_metadata: { path, method: init.method || "GET" },
+        }),
+      );
+    }
     const payload = await response.json().catch(() => ({}));
     const detail = Array.isArray(payload.detail)
       ? payload.detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join(", ")

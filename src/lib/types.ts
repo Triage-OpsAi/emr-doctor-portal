@@ -58,6 +58,7 @@ export type PatientDashboardRecord = {
   status: string;
   created_at: string;
   last_visit_at: string | null;
+  approval_percentage?: number;
 };
 
 export type StructuredNote = {
@@ -128,9 +129,12 @@ export type VoiceJob = {
 export type PatientChartRecord = {
   id: string;
   encounter_id: string;
+  department: string | null;
   status: string;
   source_language: string;
   structured_note: StructuredNote | null;
+  encounter_summary: string;
+  captured_by: string;
   audio_available: boolean;
   created_at: string;
 };
@@ -166,6 +170,22 @@ export type PatientChart = {
   reports: PatientReport[];
   medications: PatientMedication[];
   discharge_summaries: DischargeSummary[];
+  handovers: HandoverSummary[];
+  section_reviews: PatientSectionReview[];
+  approval_percentage: number;
+};
+
+export type PatientSectionReview = {
+  section_key: "summary" | "timeline" | "clinical" | "medications" | "diagnoses" | "reports" | "documents" | "handover";
+  content_override: string | null;
+  item_overrides: Record<string, string>;
+  deleted_items: string[];
+  is_deleted: boolean;
+  is_approved: boolean;
+  approved_by: string | null;
+  approved_at: string | null;
+  updated_by: string;
+  updated_at: string;
 };
 
 export type ReportUpload = {
@@ -188,6 +208,26 @@ export type DischargeSummary = {
 };
 
 export type DischargeUpload = {
+  job_id: string;
+  upload_url: string;
+  content_type: string;
+  expires_in: number;
+};
+
+export type HandoverSummary = {
+  id: string;
+  status: string;
+  source_language: string;
+  translated_instructions: string | null;
+  summary_data: Record<string, unknown> | null;
+  captured_by: string;
+  handed_over_to: string | null;
+  recorded_at: string;
+  audio_available: boolean;
+  error_message: string | null;
+};
+
+export type HandoverUpload = {
   job_id: string;
   upload_url: string;
   content_type: string;
@@ -231,4 +271,30 @@ export type NetworkHospital = {
   created_at: string;
   is_active: boolean;
   workspace_path: string;
+};
+
+export type AuditEvent = {
+  id: string;
+  client_event_id: string | null;
+  action: string;
+  event_category: string;
+  actor_name: string;
+  actor_role: string | null;
+  patient_id: string | null;
+  patient_name: string | null;
+  patient_reference: string | null;
+  encounter_id: string | null;
+  resource_type: string;
+  resource_id: string | null;
+  outcome: string;
+  source: string;
+  changes: Record<string, unknown> | null;
+  event_metadata: Record<string, unknown> | null;
+  occurred_at: string;
+  recorded_at: string;
+};
+
+export type AuditEventList = {
+  events: AuditEvent[];
+  total: number;
 };

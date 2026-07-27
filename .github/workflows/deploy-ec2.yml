@@ -1,0 +1,357 @@
+name: Deploy doctor portal to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: meridian-doctor-portal-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy exact commit
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+
+    env:
+      SSH_HOST: ${{ secrets.EC2_HOST }}
+      SSH_USER: ${{ secrets.EC2_USER }}
+      DEPLOY_PATH: ${{ secrets.EC2_DEPLOY_PATH }}
+      NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || vars.NEXT_PUBLIC_API_URL }}
+      SSH_KEY_FILE: /tmp/doctor_portal_deploy_key
+      LOCAL_ENV_FILE: /tmp/doctor-portal-production.env
+      RELEASE_ARCHIVE: doctor-portal-${{ github.sha }}.tar.gz
+
+    steps:
+      - name: Check out pushed commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate production configuration
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          for value in \
+            "$SSH_HOST" \
+            "$SSH_USER" \
+            "$DEPLOY_PATH" \
+            "$SSH_PRIVATE_KEY" \
+            "$SSH_KNOWN_HOSTS" \
+            "$NEXT_PUBLIC_API_URL"; do
+            if [[ -z "$value" ]]; then
+              echo "::error::One or more required production values are missing."
+              exit 1
+            fi
+          done
+
+          if [[ "$DEPLOY_PATH" != /* || "$DEPLOY_PATH" == "/" ]]; then
+            echo "::error::EC2_DEPLOY_PATH must be an absolute path other than /."
+            exit 1
+          fi
+
+          python3 - <<'PY'
+          import os
+          from urllib.parse import urlsplit
+
+          value = os.environ["NEXT_PUBLIC_API_URL"].strip().rstrip("/")
+          parsed = urlsplit(value)
+
+          if parsed.scheme != "https" or not parsed.hostname:
+              raise SystemExit(
+                  "NEXT_PUBLIC_API_URL must be a valid production HTTPS URL."
+              )
+
+          if parsed.hostname in {"localhost", "127.0.0.1", "::1"}:
+              raise SystemExit(
+                  "NEXT_PUBLIC_API_URL must not point to localhost."
+              )
+
+          if "\n" in value or "\r" in value:
+              raise SystemExit("NEXT_PUBLIC_API_URL contains a newline.")
+
+          with open(
+              "/tmp/doctor-portal-production.env",
+              "w",
+              encoding="utf-8",
+          ) as file:
+              file.write(f"NEXT_PUBLIC_API_URL={value}\n")
+
+          os.chmod("/tmp/doctor-portal-production.env", 0o600)
+          print(f"Doctor portal API host: {parsed.hostname}")
+          PY
+
+      - name: Configure SSH
+        shell: bash
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.EC2_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$SSH_KEY_FILE"
+          chmod 600 "$SSH_KEY_FILE"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Test SSH connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            "echo 'SSH connection successful'"
+
+      - name: Prepare EC2 deployment directories
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            bash -s -- "$DEPLOY_PATH" <<'REMOTE'
+          set -euo pipefail
+
+          deploy_root="$1"
+
+          install -d -m 750 \
+            "$deploy_root" \
+            "$deploy_root/incoming" \
+            "$deploy_root/releases" \
+            "$deploy_root/shared"
+
+          command -v docker >/dev/null 2>&1 || {
+            echo "Docker is not installed on the EC2 server." >&2
+            exit 1
+          }
+
+          docker compose version >/dev/null 2>&1 || {
+            echo "Docker Compose is not available on the EC2 server." >&2
+            exit 1
+          }
+          REMOTE
+
+      - name: Upload production environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          scp \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$LOCAL_ENV_FILE" \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/shared/.env.new"
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            bash -s -- "$DEPLOY_PATH" <<'REMOTE'
+          set -euo pipefail
+
+          deploy_root="$1"
+          chmod 600 "$deploy_root/shared/.env.new"
+          mv "$deploy_root/shared/.env.new" "$deploy_root/shared/.env"
+          REMOTE
+
+      - name: Package exact source revision
+        shell: bash
+        run: |
+          set -euo pipefail
+          git archive \
+            --format=tar.gz \
+            --output="$RUNNER_TEMP/$RELEASE_ARCHIVE" \
+            "$GITHUB_SHA"
+
+      - name: Upload release archive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          scp \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$RUNNER_TEMP/$RELEASE_ARCHIVE" \
+            "$SSH_USER@$SSH_HOST:$DEPLOY_PATH/incoming/$RELEASE_ARCHIVE"
+
+      - name: Build and deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ssh \
+            -i "$SSH_KEY_FILE" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$SSH_USER@$SSH_HOST" \
+            bash -s -- \
+              "$DEPLOY_PATH" \
+              "$GITHUB_SHA" \
+              "$RELEASE_ARCHIVE" <<'REMOTE'
+          set -Eeuo pipefail
+
+          deploy_root="$1"
+          release_sha="$2"
+          archive_name="$3"
+          release_dir="$deploy_root/releases/$release_sha"
+          archive_path="$deploy_root/incoming/$archive_name"
+          previous_release=""
+
+          if [[ ! "$release_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid release SHA: $release_sha" >&2
+            exit 1
+          fi
+
+          case "$release_dir" in
+            "$deploy_root"/releases/*) ;;
+            *)
+              echo "Release directory escaped deployment root." >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ -L "$deploy_root/current" ]]; then
+            previous_release="$(readlink -f "$deploy_root/current")"
+          fi
+
+          rollback() {
+            exit_code=$?
+            trap - ERR
+            echo "Deployment failed. Attempting rollback." >&2
+
+            if [[ -n "$previous_release" &&
+                  -f "$previous_release/compose.production.yaml" ]]; then
+              (
+                cd "$previous_release"
+                export IMAGE_TAG="$(basename "$previous_release")"
+                docker compose \
+                  -f compose.production.yaml \
+                  up --detach --no-build --remove-orphans
+              ) || echo "Automatic rollback failed." >&2
+            else
+              echo "No previous release is available for rollback." >&2
+            fi
+
+            exit "$exit_code"
+          }
+
+          trap rollback ERR
+
+          [[ -f "$archive_path" ]] || {
+            echo "Release archive is missing." >&2
+            exit 1
+          }
+
+          [[ -f "$deploy_root/shared/.env" ]] || {
+            echo "Production environment is missing." >&2
+            exit 1
+          }
+
+          rm -rf "$release_dir"
+          install -d -m 750 "$release_dir"
+          tar -xzf "$archive_path" -C "$release_dir"
+          ln -sfn "$deploy_root/shared/.env" "$release_dir/.env"
+
+          cd "$release_dir"
+          export IMAGE_TAG="$release_sha"
+
+          docker compose -f compose.production.yaml config --quiet
+          docker compose \
+            -f compose.production.yaml \
+            build --pull ui </dev/null
+          docker compose \
+            -f compose.production.yaml \
+            up --detach --no-build --remove-orphans
+
+          container_id="$(
+            docker compose \
+              -f compose.production.yaml \
+              ps --quiet ui
+          )"
+
+          [[ -n "$container_id" ]] || {
+            echo "Doctor portal container was not created." >&2
+            exit 1
+          }
+
+          healthy=false
+
+          for attempt in $(seq 1 30); do
+            status="$(
+              docker inspect \
+                --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                "$container_id"
+            )"
+
+            echo "Portal health check $attempt/30: $status"
+
+            if [[ "$status" == "healthy" ]]; then
+              healthy=true
+              break
+            fi
+
+            if [[ "$status" == "unhealthy" ||
+                  "$status" == "exited" ||
+                  "$status" == "dead" ]]; then
+              docker compose \
+                -f compose.production.yaml \
+                logs --tail=200 ui
+              exit 1
+            fi
+
+            sleep 5
+          done
+
+          if [[ "$healthy" != "true" ]]; then
+            docker compose \
+              -f compose.production.yaml \
+              logs --tail=200 ui
+            echo "Doctor portal did not become healthy in time." >&2
+            exit 1
+          fi
+
+          ln -sfn "$release_dir" "$deploy_root/current"
+          rm -f "$archive_path"
+          trap - ERR
+
+          docker compose -f compose.production.yaml ps
+          docker image prune -f
+          echo "Successfully deployed commit $release_sha"
+          REMOTE
+
+      - name: Clean up sensitive local files
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$SSH_KEY_FILE"
+          rm -f "$LOCAL_ENV_FILE"

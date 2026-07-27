@@ -5,7 +5,17 @@ import { useRouter } from "next/navigation";
 import { AddMedicationModal, AddRecordModal, Modal, ReportUploadModal, VoiceEncounterModal } from "@/components/PortalApp";
 import { Icon, type IconName } from "@/components/Icon";
 import { apiFetch, clearTokens, hasSession } from "@/lib/api";
-import type { DischargeUpload, PatientChart, PatientDashboardRecord, VoiceJob, Workspace } from "@/lib/types";
+import { AUDIT_EVENTS, flushAuditQueue, queueAuditEvent } from "@/lib/audit";
+import type {
+  ClinicalUser,
+  DischargeUpload,
+  HandoverUpload,
+  PatientChart,
+  PatientDashboardRecord,
+  PatientSectionReview,
+  VoiceJob,
+  Workspace,
+} from "@/lib/types";
 
 /* ---------------------------------------------------------------------- */
 /*  Small shared UI primitives                                            */
@@ -40,6 +50,98 @@ function PointList({ value, empty = "Not documented" }: { value?: string | null;
   );
 }
 
+function SummaryBox({
+  itemKey,
+  title,
+  value,
+  review,
+  className,
+  editMode,
+  onChange,
+  onDelete,
+  children,
+}: {
+  itemKey: string;
+  title: string;
+  value: string;
+  review?: PatientSectionReview;
+  className: string;
+  editMode: boolean;
+  onChange: (itemKey: string, value: string) => void;
+  onDelete: (itemKey: string, title: string) => void;
+  children: React.ReactNode;
+}) {
+  if (review?.deleted_items?.includes(itemKey)) return null;
+  const override = review?.item_overrides?.[itemKey];
+
+  return (
+    <div className={`relative ${className}`}>
+      <div className="absolute right-2 top-2 z-10 flex gap-1">
+        {!review?.is_approved && (
+          <button
+            type="button"
+            onClick={() => onDelete(itemKey, title)}
+            className="focus-ring inline-flex items-center gap-1 rounded-md border border-red-100 bg-white/95 px-1.5 py-1 text-[9px] font-semibold text-red-500 shadow-sm hover:border-red-300"
+            aria-label={`Delete ${title}`}
+          >
+            <Icon name="trash" size={10} /> Delete
+          </button>
+        )}
+      </div>
+      <div className="pt-6">
+        {editMode ? (
+          <textarea
+            defaultValue={override || value}
+            onChange={(event) => onChange(itemKey, event.target.value)}
+            rows={Math.max(3, Math.min(10, points(override || value).length + 1))}
+            aria-label={`Edit ${title}`}
+            className="focus-ring min-h-24 w-full resize-y rounded-lg border border-[#8bcac0] bg-white p-3 text-sm leading-6 text-[#26353b]"
+          />
+        ) : override ? (
+          <>
+            <p className="mb-3 text-xs font-bold">{title}</p>
+            <PointList value={override} />
+          </>
+        ) : children}
+      </div>
+    </div>
+  );
+}
+
+function InlineContent({
+  editing,
+  value,
+  onChange,
+  children,
+}: {
+  editing: boolean;
+  value: string;
+  onChange: (value: string) => void;
+  children: React.ReactNode;
+}) {
+  if (!editing) return <>{children}</>;
+  return (
+    <textarea
+      defaultValue={value}
+      onChange={(event) => onChange(event.target.value)}
+      rows={Math.max(3, Math.min(14, points(value).length + 2))}
+      className="focus-ring w-full resize-y rounded-lg border border-[#8bcac0] bg-white p-3 text-sm leading-6 text-[#26353b]"
+    />
+  );
+}
+
+function SmallDeleteButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="focus-ring inline-flex items-center gap-1 rounded-md border border-red-100 bg-white px-1.5 py-1 text-[9px] font-semibold text-red-500 hover:border-red-300"
+    >
+      <Icon name="trash" size={10} /> Delete
+    </button>
+  );
+}
+
 function ClinicalSection({ id, title, action, children }: { id?: string; title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section id={id} className="scroll-mt-24 border-t border-[#eef2f1] px-5 py-6 first:border-t-0 sm:px-7">
@@ -61,7 +163,16 @@ function ReportState({ status }: { status: string }) {
         : status === "needs_reupload" || status === "failed"
           ? "bg-red-50 text-red-600"
           : "bg-amber-50 text-amber-600";
-  return <span className={`rounded-full px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-wide ${styles}`}>{status.replaceAll("_", " ")}</span>;
+  const labels: Record<string, string> = {
+    queued: "In progress",
+    processing: "In progress",
+    transcribing: "In progress",
+    generating_summary: "In progress",
+    generating_pdf: "In progress",
+    pending_review: "Needs review",
+    needs_reupload: "New file needed",
+  };
+  return <span className={`rounded-full px-2.5 py-1 font-mono text-[9px] font-semibold uppercase tracking-wide ${styles}`}>{labels[status] || status.replaceAll("_", " ")}</span>;
 }
 
 function HeartbeatLoader({ label }: { label: string }) {
@@ -82,6 +193,7 @@ function HeartbeatLoader({ label }: { label: string }) {
 
 function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: string; onClose: () => void; onDone: () => void }) {
   const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
   const [audio, setAudio] = useState<Blob | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [elapsed, setElapsed] = useState(0);
@@ -124,16 +236,37 @@ function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: st
       setElapsed(0);
       timer.current = setInterval(() => setElapsed((value) => value + 1), 1000);
       setRecording(true);
+      setPaused(false);
+      queueAuditEvent({ action: AUDIT_EVENTS.AUDIO_CAPTURE_STARTED, resource_type: "discharge_audio", patient_id: patientId });
     } catch {
       setError("Microphone permission is required to record discharge instructions.");
     }
   }
 
   function stop() {
-    if (recorder.current?.state === "recording") recorder.current.stop();
+    if (["recording", "paused"].includes(recorder.current?.state || "")) recorder.current?.stop();
     if (timer.current) clearInterval(timer.current);
     timer.current = null;
     setRecording(false);
+    setPaused(false);
+    queueAuditEvent({ action: AUDIT_EVENTS.AUDIO_CAPTURE_STOPPED, resource_type: "discharge_audio", patient_id: patientId, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  function pause() {
+    if (recorder.current?.state !== "recording") return;
+    recorder.current.pause();
+    if (timer.current) clearInterval(timer.current);
+    timer.current = null;
+    setPaused(true);
+    queueAuditEvent({ action: "audio.paused", resource_type: "discharge_audio", patient_id: patientId, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  function resume() {
+    if (recorder.current?.state !== "paused") return;
+    recorder.current.resume();
+    timer.current = setInterval(() => setElapsed((value) => value + 1), 1000);
+    setPaused(false);
+    queueAuditEvent({ action: "audio.resumed", resource_type: "discharge_audio", patient_id: patientId, event_metadata: { duration_seconds: elapsed } });
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -142,28 +275,28 @@ function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: st
       setError("Record the discharge instructions first.");
       return;
     }
-    const form = new FormData(event.currentTarget);
     const contentType = (audio.type || "audio/webm").split(";", 1)[0];
     setSubmitting(true);
     setError("");
     try {
-      setStage("Preparing secure upload…");
+      setStage("Saving recording…");
       const upload = await apiFetch<DischargeUpload>(`/patients/${patientId}/discharge-summaries`, {
         method: "POST",
         body: JSON.stringify({
           content_type: contentType,
           file_size: audio.size,
-          language_code: String(form.get("language_code") || "unknown"),
+          language_code: "unknown",
         }),
       });
-      setStage("Uploading instructions…");
+      setStage("Saving recording…");
       const response = await fetch(upload.upload_url, {
         method: "PUT",
         headers: { "Content-Type": upload.content_type },
         body: audio,
       });
-      if (!response.ok) throw new Error(`Instruction upload failed (${response.status}).`);
-      setStage("Starting discharge pipeline…");
+      if (!response.ok) throw new Error("The recording could not be saved.");
+      queueAuditEvent({ action: "audio.uploaded", resource_type: "discharge_summary", resource_id: upload.job_id, patient_id: patientId, outcome: "queued", event_metadata: { bytes: audio.size } });
+      setStage("Preparing summary…");
       await apiFetch(`/patients/${patientId}/discharge-summaries/${upload.job_id}/complete`, {
         method: "POST",
         body: JSON.stringify({ etag: response.headers.get("etag") }),
@@ -171,6 +304,7 @@ function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: st
       onDone();
       onClose();
     } catch (reason) {
+      queueAuditEvent({ action: "delivery.retry_required", resource_type: "discharge_audio", patient_id: patientId, outcome: "failure", event_metadata: { reason: reason instanceof Error ? reason.message : "upload_failed" } });
       setError(reason instanceof Error ? reason.message : "Unable to start the discharge summary.");
     } finally {
       setSubmitting(false);
@@ -180,26 +314,10 @@ function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: st
 
   const time = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
   return (
-    <Modal title="Generate discharge summary" subtitle="Record discharge instructions in any supported Indian language. The complete patient chart will be included automatically." onClose={onClose}>
+    <Modal title="Generate discharge summary" subtitle="Record the discharge instructions. The patient chart will be included automatically." onClose={onClose}>
       <form onSubmit={submit} className="space-y-5 p-6">
-        <label className="block text-xs text-[#51616b]">
-          Instruction language
-          <select name="language_code" className="focus-ring mt-2 h-11 w-full rounded-lg border border-[#dfe7e6] bg-white px-3 text-sm">
-            <option value="unknown">Detect automatically</option>
-            <option value="hi-IN">Hindi</option>
-            <option value="kn-IN">Kannada</option>
-            <option value="ta-IN">Tamil</option>
-            <option value="te-IN">Telugu</option>
-            <option value="mr-IN">Marathi</option>
-            <option value="bn-IN">Bengali</option>
-            <option value="gu-IN">Gujarati</option>
-            <option value="ml-IN">Malayalam</option>
-            <option value="pa-IN">Punjabi</option>
-            <option value="en-IN">English</option>
-          </select>
-        </label>
         <div className="rounded-xl border border-[#dfe7e6] bg-[#f7f9f9] p-6 text-center">
-          <p className="font-mono text-xs text-[#829096]">{recording ? `Recording ${time}` : audio ? "Instructions recorded" : "Ready to record"}</p>
+          <p className="font-mono text-xs text-[#829096]">{recording ? `${paused ? "Paused" : "Recording"} ${time}` : audio ? "Instructions recorded" : "Ready to record"}</p>
           <div className="mt-5 flex flex-wrap justify-center gap-3">
             {!recording && !audio && (
               <button type="button" onClick={start} className={actionButton}>
@@ -207,9 +325,10 @@ function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: st
               </button>
             )}
             {recording && (
-              <button type="button" onClick={stop} className="focus-ring rounded-lg bg-red-500 px-4 py-2 text-xs font-semibold text-white">
-                Stop recording
-              </button>
+              <>
+                <button type="button" onClick={paused ? resume : pause} className={actionButton}><span className="font-bold">{paused ? "▶" : "Ⅱ"}</span> {paused ? "Resume" : "Pause"}</button>
+                <button type="button" onClick={stop} className="focus-ring rounded-lg bg-red-500 px-4 py-2 text-xs font-semibold text-white">Stop recording</button>
+              </>
             )}
             {audio && !recording && (
               <button type="button" onClick={start} className={actionButton}>
@@ -236,30 +355,332 @@ function DischargeRecordingModal({ patientId, onClose, onDone }: { patientId: st
   );
 }
 
+function HandoverRecordingModal({ patientId, onClose, onDone }: { patientId: string; onClose: () => void; onDone: () => void }) {
+  const [users, setUsers] = useState<ClinicalUser[]>([]);
+  const [query, setQuery] = useState("");
+  const [recipientId, setRecipientId] = useState("");
+  const [recording, setRecording] = useState(false);
+  const [paused, setPaused] = useState(false);
+  const [audio, setAudio] = useState<Blob | null>(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [elapsed, setElapsed] = useState(0);
+  const [submitting, setSubmitting] = useState(false);
+  const [stage, setStage] = useState("");
+  const [error, setError] = useState("");
+  const recorder = useRef<MediaRecorder | null>(null);
+  const chunks = useRef<Blob[]>([]);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    apiFetch<ClinicalUser[]>("/patients/handover-recipients")
+      .then((items) => setUsers(items.filter((item) => item.is_active && !item.is_current_user)))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load clinicians."));
+    return () => {
+      if (timer.current) clearInterval(timer.current);
+      recorder.current?.stream.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  const matches = useMemo(() => {
+    const value = query.trim().toLowerCase();
+    return users
+      .filter((user) => !value || `${user.full_name} ${user.role} ${user.email}`.toLowerCase().includes(value))
+      .slice(0, 8);
+  }, [query, users]);
+
+  async function start() {
+    setError("");
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl("");
+      setAudio(null);
+      chunks.current = [];
+      const next = new MediaRecorder(stream);
+      next.ondataavailable = (event) => {
+        if (event.data.size) chunks.current.push(event.data);
+      };
+      next.onstop = () => {
+        const blob = new Blob(chunks.current, { type: next.mimeType || "audio/webm" });
+        setAudio(blob);
+        setPreviewUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach((track) => track.stop());
+      };
+      next.start();
+      recorder.current = next;
+      setElapsed(0);
+      timer.current = setInterval(() => setElapsed((value) => value + 1), 1000);
+      setRecording(true);
+      setPaused(false);
+      queueAuditEvent({ action: AUDIT_EVENTS.AUDIO_CAPTURE_STARTED, resource_type: "handover_audio", patient_id: patientId });
+    } catch {
+      setError("Microphone permission is required to prepare a handover.");
+    }
+  }
+
+  function stop() {
+    if (["recording", "paused"].includes(recorder.current?.state || "")) recorder.current?.stop();
+    if (timer.current) clearInterval(timer.current);
+    timer.current = null;
+    setRecording(false);
+    setPaused(false);
+    queueAuditEvent({ action: AUDIT_EVENTS.AUDIO_CAPTURE_STOPPED, resource_type: "handover_audio", patient_id: patientId, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  function pause() {
+    if (recorder.current?.state !== "recording") return;
+    recorder.current.pause();
+    if (timer.current) clearInterval(timer.current);
+    timer.current = null;
+    setPaused(true);
+    queueAuditEvent({ action: "audio.paused", resource_type: "handover_audio", patient_id: patientId, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  function resume() {
+    if (recorder.current?.state !== "paused") return;
+    recorder.current.resume();
+    timer.current = setInterval(() => setElapsed((value) => value + 1), 1000);
+    setPaused(false);
+    queueAuditEvent({ action: "audio.resumed", resource_type: "handover_audio", patient_id: patientId, event_metadata: { duration_seconds: elapsed } });
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!audio) {
+      setError("Record the clinical handover first.");
+      return;
+    }
+    const contentType = (audio.type || "audio/webm").split(";", 1)[0];
+    setSubmitting(true);
+    setError("");
+    try {
+      setStage("Saving recording…");
+      const upload = await apiFetch<HandoverUpload>(`/patients/${patientId}/handovers`, {
+        method: "POST",
+        body: JSON.stringify({
+          content_type: contentType,
+          file_size: audio.size,
+          language_code: "unknown",
+          handed_over_to: recipientId || null,
+        }),
+      });
+      setStage("Saving recording…");
+      const response = await fetch(upload.upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": upload.content_type },
+        body: audio,
+      });
+      if (!response.ok) throw new Error("The recording could not be saved.");
+      queueAuditEvent({ action: "audio.uploaded", resource_type: "handover", resource_id: upload.job_id, patient_id: patientId, outcome: "queued", event_metadata: { bytes: audio.size } });
+      setStage("Preparing handover…");
+      await apiFetch(`/patients/${patientId}/handovers/${upload.job_id}/complete`, {
+        method: "POST",
+        body: JSON.stringify({ etag: response.headers.get("etag") }),
+      });
+      onDone();
+      onClose();
+    } catch (reason) {
+      queueAuditEvent({ action: "delivery.retry_required", resource_type: "handover_audio", patient_id: patientId, outcome: "failure", event_metadata: { reason: reason instanceof Error ? reason.message : "upload_failed" } });
+      setError(reason instanceof Error ? reason.message : "Unable to prepare the handover.");
+    } finally {
+      setSubmitting(false);
+      setStage("");
+    }
+  }
+
+  const selected = users.find((user) => user.id === recipientId);
+  const time = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+  return (
+    <Modal title="Prepare handover" subtitle="Record the update now. A receiving clinician can be selected now or assigned later." onClose={onClose}>
+      <form onSubmit={submit} className="space-y-5 p-6">
+        <div className="rounded-xl border border-[#dfe7e6] bg-[#f7f9f9] p-5 text-center">
+          <p className="font-mono text-xs text-[#829096]">{recording ? `${paused ? "Paused" : "Recording"} ${time}` : audio ? "Handover recorded" : "Ready to record"}</p>
+          <div className="mt-4 flex justify-center gap-3">
+            {!recording && <button type="button" onClick={start} className={actionButton}><Icon name={audio ? "refresh" : "mic"} /> {audio ? "Record again" : "Start recording"}</button>}
+            {recording && <>
+              <button type="button" onClick={paused ? resume : pause} className={actionButton}><span className="font-bold">{paused ? "▶" : "Ⅱ"}</span> {paused ? "Resume" : "Pause"}</button>
+              <button type="button" onClick={stop} className="focus-ring rounded-lg bg-red-500 px-4 py-2 text-xs font-semibold text-white">Stop recording</button>
+            </>}
+          </div>
+          {previewUrl && <audio controls src={previewUrl} className="mt-4 w-full" />}
+        </div>
+        <div>
+          <label htmlFor="handover-recipient" className="text-xs text-[#51616b]">Hand over to <span className="text-[#9aa7ac]">(optional)</span></label>
+          <div className="relative mt-2">
+            <Icon name="search" size={14} className="absolute left-3 top-3.5 text-[#9aa7ac]" />
+            <input
+              id="handover-recipient"
+              value={selected ? selected.full_name : query}
+              onChange={(event) => {
+                setRecipientId("");
+                setQuery(event.target.value);
+              }}
+              placeholder="Search clinician by name, role, or email"
+              autoComplete="off"
+              className="focus-ring h-11 w-full rounded-lg border border-[#dfe7e6] bg-white pl-9 pr-3 text-sm"
+            />
+            {!recipientId && (
+              <div className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-xl border border-[#dfe7e6] bg-white p-1 shadow-xl">
+                {matches.map((user) => (
+                  <button key={user.id} type="button" onClick={() => { setRecipientId(user.id); setQuery(user.full_name); }} className="w-full rounded-lg px-3 py-2 text-left hover:bg-[#eef5f3]">
+                    <span className="block text-sm font-semibold">{user.full_name}</span>
+                    <span className="text-[10px] capitalize text-[#829096]">{user.role} · {user.email}</span>
+                  </button>
+                ))}
+                {!matches.length && <p className="px-3 py-3 text-xs text-[#9aa7ac]">No matching clinicians.</p>}
+              </div>
+            )}
+          </div>
+        </div>
+        <p className="text-xs leading-5 text-[#51616b]">The draft is prepared even when no recipient is available. A clinician can be assigned later from the handover tab.</p>
+        {error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-600">{error}</p>}
+        <div className="flex justify-end gap-3">
+          <button type="button" onClick={onClose} className={actionButton}>Cancel</button>
+          <button disabled={!audio || submitting} className={primaryButton}>{submitting ? stage : "Prepare handover"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+function AssignHandoverModal({
+  patientId,
+  handoverId,
+  onClose,
+  onDone,
+}: {
+  patientId: string;
+  handoverId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [users, setUsers] = useState<ClinicalUser[]>([]);
+  const [query, setQuery] = useState("");
+  const [recipientId, setRecipientId] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    apiFetch<ClinicalUser[]>("/patients/handover-recipients")
+      .then((items) => setUsers(items.filter((item) => item.is_active)))
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "Unable to load clinicians."));
+  }, []);
+
+  const matches = useMemo(() => {
+    const value = query.trim().toLowerCase();
+    return users
+      .filter((user) => !value || `${user.full_name} ${user.role} ${user.email}`.toLowerCase().includes(value))
+      .slice(0, 10);
+  }, [query, users]);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!recipientId) {
+      setError("Select the person receiving this handover.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiFetch(`/patients/${patientId}/handovers/${handoverId}/recipient`, {
+        method: "PATCH",
+        body: JSON.stringify({ handed_over_to: recipientId }),
+      });
+      queueAuditEvent({
+        action: "handover.edit_made",
+        resource_type: "handover",
+        resource_id: handoverId,
+        patient_id: patientId,
+        changes: { handed_over_to: recipientId },
+      });
+      onDone();
+      onClose();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to assign the handover.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const selected = users.find((user) => user.id === recipientId);
+  return (
+    <Modal title="Assign handover" subtitle="Choose the nurse, doctor, or other clinical team member receiving this patient." onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4 p-6">
+        <div>
+          <label htmlFor="assign-handover-recipient" className="text-xs text-[#51616b]">Receiving clinician</label>
+          <div className="relative mt-2">
+            <Icon name="search" size={14} className="absolute left-3 top-3.5 text-[#9aa7ac]" />
+            <input
+              id="assign-handover-recipient"
+              value={selected ? selected.full_name : query}
+              onChange={(event) => {
+                setRecipientId("");
+                setQuery(event.target.value);
+              }}
+              placeholder="Search by name, role, or email"
+              autoComplete="off"
+              className="focus-ring h-11 w-full rounded-lg border border-[#dfe7e6] bg-white pl-9 pr-3 text-sm"
+            />
+            {!recipientId && (
+              <div className="mt-1 max-h-56 overflow-y-auto rounded-xl border border-[#dfe7e6] bg-white p-1">
+                {matches.map((user) => (
+                  <button key={user.id} type="button" onClick={() => { setRecipientId(user.id); setQuery(user.full_name); }} className="w-full rounded-lg px-3 py-2 text-left hover:bg-[#eef5f3]">
+                    <span className="block text-sm font-semibold">{user.full_name}</span>
+                    <span className="text-[10px] capitalize text-[#829096]">{user.role} · {user.email}</span>
+                  </button>
+                ))}
+                {!matches.length && <p className="px-3 py-3 text-xs text-[#9aa7ac]">No matching clinicians.</p>}
+              </div>
+            )}
+          </div>
+        </div>
+        {error && <p className="rounded-lg bg-red-50 p-3 text-xs text-red-600">{error}</p>}
+        <div className="flex justify-end gap-3">
+          <button type="button" onClick={onClose} className={actionButton}>Cancel</button>
+          <button disabled={!recipientId || submitting} className={primaryButton}>{submitting ? "Assigning…" : "Assign handover"}</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 /* ---------------------------------------------------------------------- */
 /*  Vitals + medication-mix helpers (presentational only)                 */
 /* ---------------------------------------------------------------------- */
 
-type VitalReading = { label: string; value: string; unit?: string };
+type VitalReading = { label: string; value: string; unit?: string; capturedAt?: string; capturedBy?: string };
 
-// Vitals aren't part of the current PatientChart type. Read them defensively
-// so the UI matches the reference design once the API starts returning them,
-// without fabricating numbers today.
 function readVitals(chart: PatientChart | null): VitalReading[] {
   const raw = (chart as unknown as { vitals?: Record<string, string | number> } | null)?.vitals;
-  const fields: Array<[string, string, string?]> = [
-    ["bp", "BP", "mmHg"],
-    ["hr", "HR", "bpm"],
-    ["spo2", "SpO₂", "%"],
-    ["rr", "RR", "breaths/min"],
-    ["temp", "Temp", "°C"],
-    ["pain_score", "Pain Score", undefined],
+  const fields: Array<[string, string, string | undefined, RegExp]> = [
+    ["bp", "BP", "mmHg", /(?:\bBP\b|blood pressure)\s*(?:is|was|of|[:=-])*\s*(\d{2,3}\s*\/\s*\d{2,3})/i],
+    ["hr", "HR", "bpm", /(?:\bHR\b|heart rate|pulse)\s*(?:is|was|of|[:=-])*\s*(\d{2,3})/i],
+    ["spo2", "SpO₂", "%", /(?:SpO2|SpO₂|oxygen saturation)\s*(?:is|was|of|[:=-])*\s*(\d{2,3})\s*%?/i],
+    ["rr", "RR", "breaths/min", /(?:\bRR\b|respiratory rate)\s*(?:is|was|of|[:=-])*\s*(\d{1,3})/i],
+    ["temp", "Temp", "°C", /(?:temperature|\btemp\b)\s*(?:is|was|of|[:=-])*\s*(\d{2,3}(?:\.\d+)?)\s*°?\s*[CF]?/i],
+    ["pain_score", "Pain Score", undefined, /(?:pain score|pain)\s*(?:is|was|of|[:=-])*\s*(\d{1,2})(?:\s*\/\s*10)?/i],
   ];
-  return fields.map(([key, label, unit]) => ({
-    label,
-    unit,
-    value: raw && raw[key] != null ? String(raw[key]) : "—",
-  }));
+  return fields.map(([key, label, unit, pattern]) => {
+    if (raw && raw[key] != null) return { label, unit, value: String(raw[key]) };
+    for (const record of chart?.records || []) {
+      const text = [record.structured_note?.objective, record.structured_note?.subjective].filter(Boolean).join(" ");
+      const match = text.match(pattern);
+      if (match) {
+        return {
+          label,
+          unit,
+          value: match[1].replace(/\s+/g, ""),
+          capturedAt: record.created_at,
+          capturedBy: record.captured_by,
+        };
+      }
+    }
+    return { label, unit, value: "—" };
+  });
 }
 
 const MEDICATION_CATEGORIES: Array<{ label: string; test: RegExp; color: string }> = [
@@ -360,6 +781,7 @@ const SIDEBAR_LINKS: Array<{ label: string; icon: string; href: string; badge?: 
   { label: "Diagnostics", icon: "activity", href: "#reports" },
   { label: "Reports", icon: "file", href: "#reports", badge: (n) => n.reports },
   { label: "Discharge Summary", icon: "mic", href: "#discharge" },
+  { label: "Prepare Handover", icon: "users", href: "#handover" },
   { label: "EMR Records", icon: "file", href: "#emr-summary" },
 ];
 
@@ -371,6 +793,7 @@ const TOP_TABS = [
   { id: "diagnoses", label: "Diagnoses" },
   { id: "reports", label: "Reports" },
   { id: "documents", label: "Documents" },
+  { id: "handover", label: "Handover" },
 ] as const;
 
 type PatientTab = (typeof TOP_TABS)[number]["id"];
@@ -393,16 +816,37 @@ function EditPatientModal({
     setSubmitting(true);
     setError("");
     try {
+      const updated = {
+        full_name: String(form.get("full_name") || ""),
+        age: form.get("age") ? Number(form.get("age")) : null,
+        phone: String(form.get("phone") || "") || null,
+        gender: String(form.get("gender") || "") || null,
+        encounter_number: String(form.get("encounter_number") || "") || null,
+        ward_number: String(form.get("ward_number") || "") || null,
+        bed_number: String(form.get("bed_number") || "") || null,
+      };
       await apiFetch(`/patients/${patient.id}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          full_name: String(form.get("full_name") || ""),
-          phone: String(form.get("phone") || "") || null,
-          gender: String(form.get("gender") || "") || null,
-          encounter_number: String(form.get("encounter_number") || "") || null,
-          ward_number: String(form.get("ward_number") || "") || null,
-          bed_number: String(form.get("bed_number") || "") || null,
-        }),
+        body: JSON.stringify(updated),
+      });
+      queueAuditEvent({
+        action: "patient.edit_made",
+        resource_type: "patient",
+        resource_id: patient.id,
+        patient_id: patient.id,
+        encounter_id: patient.encounter_id,
+        changes: {
+          before: {
+            full_name: patient.patient_name,
+            age: patient.age,
+            phone: patient.phone,
+            gender: patient.gender,
+            encounter_number: patient.encounter_number,
+            ward_number: patient.ward_number,
+            bed_number: patient.bed_number,
+          },
+          after: updated,
+        },
       });
       onDone();
       onClose();
@@ -417,6 +861,7 @@ function EditPatientModal({
     <Modal title="Edit patient details" subtitle="Update patient identity and current encounter location." onClose={onClose}>
       <form onSubmit={submit} className="grid gap-4 p-6 sm:grid-cols-2">
         <label className="text-xs text-[var(--muted)] sm:col-span-2">Patient name<input name="full_name" required defaultValue={patient.patient_name} className="focus-ring mt-2 h-11 w-full rounded-lg border bg-[var(--ink)] px-3 text-sm" /></label>
+        <label className="text-xs text-[var(--muted)]">Age<input name="age" type="number" min="0" max="130" defaultValue={patient.age ?? ""} className="focus-ring mt-2 h-11 w-full rounded-lg border bg-[var(--ink)] px-3 text-sm" /></label>
         <label className="text-xs text-[var(--muted)]">Phone<input name="phone" defaultValue={patient.phone || ""} className="focus-ring mt-2 h-11 w-full rounded-lg border bg-[var(--ink)] px-3 text-sm" /></label>
         <label className="text-xs text-[var(--muted)]">Gender<select name="gender" defaultValue={patient.gender || ""} className="focus-ring mt-2 h-11 w-full rounded-lg border bg-[var(--ink)] px-3 text-sm"><option value="">Not recorded</option><option value="male">Male</option><option value="female">Female</option><option value="other">Other</option></select></label>
         <label className="text-xs text-[var(--muted)]">Encounter number<input name="encounter_number" defaultValue={patient.encounter_number || ""} className="focus-ring mt-2 h-11 w-full rounded-lg border bg-[var(--ink)] px-3 text-sm" /></label>
@@ -431,17 +876,22 @@ function EditPatientModal({
 
 export function PatientPage({ clientName, workspaceId, patientId }: { clientName: string; workspaceId: string; patientId: string }) {
   const router = useRouter();
+  const chartViewed = useRef(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [patient, setPatient] = useState<PatientDashboardRecord | null>(null);
   const [chart, setChart] = useState<PatientChart | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [action, setAction] = useState<"report" | "record" | "voice-encounter" | "medication" | "discharge" | "edit-patient" | null>(null);
+  const [action, setAction] = useState<"report" | "record" | "voice-encounter" | "medication" | "discharge" | "handover" | "edit-patient" | null>(null);
   const [audioUrl, setAudioUrl] = useState("");
   const [audioLoading, setAudioLoading] = useState("");
   const [approving, setApproving] = useState("");
   const [activeTab, setActiveTab] = useState<PatientTab>("summary");
   const [encounterQueued, setEncounterQueued] = useState(false);
+  const [assigningHandover, setAssigningHandover] = useState<string | null>(null);
+  const [editingTab, setEditingTab] = useState<PatientTab | null>(null);
+  const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
+  const [sectionBusy, setSectionBusy] = useState("");
 
   const workspacePath = `/${clientName}/${workspaceId}`;
 
@@ -458,6 +908,10 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
       setWorkspace(workspaceData);
       setPatient(selected);
       setChart(chartData);
+      if (!chartViewed.current) {
+        chartViewed.current = true;
+        queueAuditEvent({ action: "document.viewed", resource_type: "patient_chart", resource_id: patientId, patient_id: patientId });
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to load this patient.");
     } finally {
@@ -477,10 +931,11 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
   useEffect(() => {
     const reportPending = chart?.reports.some((report) => ["queued", "processing"].includes(report.status));
     const dischargePending = chart?.discharge_summaries.some((job) => ["queued", "transcribing", "generating_summary", "generating_pdf"].includes(job.status));
-    if (!reportPending && !dischargePending) return;
+    const handoverPending = chart?.handovers?.some((job) => ["queued", "transcribing", "generating_summary"].includes(job.status));
+    if (!reportPending && !dischargePending && !handoverPending) return;
     const handle = window.setInterval(() => void load(), 3000);
     return () => window.clearInterval(handle);
-  }, [chart?.discharge_summaries, chart?.reports, load]);
+  }, [chart?.discharge_summaries, chart?.handovers, chart?.reports, load]);
 
   useEffect(() => {
     if (!encounterQueued) return;
@@ -496,6 +951,8 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
 
   const latest = chart?.records[0] || null;
   const note = latest?.structured_note || null;
+  const activeSectionReview = chart?.section_reviews.find((review) => review.section_key === activeTab);
+  const sectionDeleted = Boolean(activeSectionReview?.is_deleted);
   const diagnosisPoints = useMemo(() => (note?.diagnoses?.length ? note.diagnoses : points(note?.assessment)), [note]);
   const orders = useMemo(() => {
     if (!chart) return [];
@@ -545,6 +1002,26 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
 
   const vitals = useMemo(() => readVitals(chart), [chart]);
   const recentReports = useMemo(() => [...(chart?.reports || [])].slice(0, 3), [chart]);
+  const longitudinalSections = useMemo(() => {
+    const definitions: Array<{ key: keyof NonNullable<typeof note>; label: string }> = [
+      { key: "chief_complaint", label: "Chief complaint" },
+      { key: "subjective", label: "Subjective" },
+      { key: "objective", label: "Objective & vitals" },
+      { key: "assessment", label: "Assessment" },
+      { key: "plan", label: "Plan" },
+      { key: "symptoms", label: "Symptoms" },
+      { key: "diagnoses", label: "Diagnoses" },
+    ];
+    return definitions.map(({ key, label }) => ({
+      key,
+      label,
+      entries: (chart?.records || []).flatMap((record) => {
+        const value = record.structured_note?.[key];
+        const text = Array.isArray(value) ? value.join(". ") : typeof value === "string" ? value : "";
+        return text.trim() ? [{ text, record }] : [];
+      }),
+    }));
+  }, [chart?.records]);
 
   async function listen(recordId: string) {
     setAudioLoading(recordId);
@@ -552,6 +1029,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
     try {
       const access = await apiFetch<{ url: string }>(`/patients/records/${recordId}/audio`);
       setAudioUrl(access.url);
+      queueAuditEvent({ action: "audio.played", resource_type: "emr_record", resource_id: recordId, patient_id: patientId });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to retrieve the recording.");
     } finally {
@@ -565,8 +1043,23 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
     try {
       const access = await apiFetch<{ url: string }>(`/patients/${patientId}/discharge-summaries/${jobId}/audio`);
       setAudioUrl(access.url);
+      queueAuditEvent({ action: "audio.played", resource_type: "discharge_summary", resource_id: jobId, patient_id: patientId });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to retrieve discharge instructions.");
+    } finally {
+      setAudioLoading("");
+    }
+  }
+
+  async function listenHandover(jobId: string) {
+    setAudioLoading(jobId);
+    setError("");
+    try {
+      const access = await apiFetch<{ url: string }>(`/patients/${patientId}/handovers/${jobId}/audio`);
+      setAudioUrl(access.url);
+      queueAuditEvent({ action: "audio.played", resource_type: "handover", resource_id: jobId, patient_id: patientId });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to retrieve the handover recording.");
     } finally {
       setAudioLoading("");
     }
@@ -577,6 +1070,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
     try {
       const access = await apiFetch<{ url: string }>(`/patients/${patientId}/discharge-summaries/${jobId}/download`);
       window.open(access.url, "_blank", "noopener,noreferrer");
+      queueAuditEvent({ action: "note.exported", resource_type: "discharge_summary", resource_id: jobId, patient_id: patientId });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to download the discharge PDF.");
     }
@@ -595,11 +1089,25 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
     }
   }
 
+  async function syncRecord(recordId: string) {
+    setApproving(`sync-${recordId}`);
+    setError("");
+    try {
+      await apiFetch(`/emr/records/${recordId}/sync`, { method: "POST" });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to sync the patient record to the EMR.");
+    } finally {
+      setApproving("");
+    }
+  }
+
   async function approveReport(reportId: string) {
     setApproving(`report-${reportId}`);
     setError("");
     try {
       await apiFetch(`/patients/${patientId}/reports/${reportId}/approve`, { method: "POST" });
+      queueAuditEvent({ action: AUDIT_EVENTS.USER_CONFIRMATION_OR_CORRECTION, resource_type: "patient_report", resource_id: reportId, patient_id: patientId, event_metadata: { operation: "confirmed" } });
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to approve the report summary.");
@@ -608,17 +1116,93 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
     }
   }
 
+  async function approveSection(section: PatientTab) {
+    setSectionBusy(`approve-${section}`);
+    setError("");
+    try {
+      await apiFetch(`/patients/${patientId}/sections/${section}/approve`, {
+        method: "POST",
+      });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to approve this section.");
+    } finally {
+      setSectionBusy("");
+    }
+  }
+
+  function editValue(itemKey: string, value: string) {
+    setEditDrafts((current) => ({ ...current, [itemKey]: value }));
+  }
+
+  async function saveInlineEdits() {
+    if (!editingTab) return;
+    const entries = Object.entries(editDrafts).filter(([, value]) => value.trim());
+    if (!entries.length) {
+      setEditingTab(null);
+      return;
+    }
+    setSectionBusy(`save-${editingTab}`);
+    setError("");
+    try {
+      await Promise.all(entries.map(([itemKey, contentOverride]) => (
+        apiFetch(`/patients/${patientId}/sections/${editingTab}/items/${itemKey}`, {
+          method: "PATCH",
+          body: JSON.stringify({ content_override: contentOverride }),
+        })
+      )));
+      setEditDrafts({});
+      setEditingTab(null);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to save the changes.");
+    } finally {
+      setSectionBusy("");
+    }
+  }
+
+  async function deleteTabItem(section: PatientTab, itemKey: string, title: string) {
+    if (!window.confirm(`Delete only the ${title} box?`)) return;
+    setSectionBusy(`delete-${itemKey}`);
+    setError("");
+    try {
+      await apiFetch(`/patients/${patientId}/sections/${section}/items/${itemKey}`, {
+        method: "DELETE",
+      });
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Unable to delete this box.");
+    } finally {
+      setSectionBusy("");
+    }
+  }
+
+  function sectionReview(section: PatientTab) {
+    return chart?.section_reviews.find((review) => review.section_key === section);
+  }
+
+  function itemValue(section: PatientTab, itemKey: string, value: string) {
+    return sectionReview(section)?.item_overrides?.[itemKey] || value;
+  }
+
+  function itemDeleted(section: PatientTab, itemKey: string) {
+    return Boolean(sectionReview(section)?.deleted_items?.includes(itemKey));
+  }
+
   async function openReport(reportId: string) {
     setError("");
     try {
       const access = await apiFetch<{ url: string }>(`/patients/${patientId}/reports/${reportId}/open`);
       window.open(access.url, "_blank", "noopener,noreferrer");
+      queueAuditEvent({ action: "file.opened", resource_type: "patient_report", resource_id: reportId, patient_id: patientId });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to open this report.");
     }
   }
 
-  function logout() {
+  async function logout() {
+    queueAuditEvent({ action: AUDIT_EVENTS.USER_LOGOUT, event_category: "authentication", resource_type: "session" });
+    await flushAuditQueue();
     clearTokens();
     router.replace("/login");
   }
@@ -726,27 +1310,10 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                 ) : null}
               </a>
             ))}
-            <span className="flex cursor-default items-center gap-3 rounded-lg px-3 py-3 text-[#c2ccce]">
-              <Icon name="activity" size={16} /> Analytics
-              <span className="ml-auto rounded bg-[#f2f5f4] px-1.5 py-0.5 text-[8px] font-semibold uppercase text-[#9aa7ac]">Soon</span>
-            </span>
             <button onClick={() => router.push(workspacePath)} className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-[#51616b] hover:bg-[#eef5f3]">
               <Icon name="users" size={16} /> Patients
             </button>
           </nav>
-
-          <div className="mt-6 space-y-3">
-            <div className="rounded-xl bg-gradient-to-br from-[#0d7778] to-[#1f9d84] p-4 text-white">
-              <p className="text-xs font-bold">AI Assistant</p>
-              <p className="mt-1.5 text-[10px] leading-4 text-white/80">Ask AI to summarize records, suggest diagnosis, and more.</p>
-              <button className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-white/15 px-3 py-2 text-[10px] font-semibold hover:bg-white/25">
-                <Icon name="activity" size={13} /> Open Assistant
-              </button>
-            </div>
-            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#eef5f3]">
-              <Icon name="settings" size={15} /> Settings
-            </button>
-          </div>
         </aside>
 
         {/* -------------------------------------------------------------- */}
@@ -803,6 +1370,11 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                             <Icon name="shield" size={15} /> {approving === `record-${latest.id}` ? "Approving…" : "Approve patient record"}
                           </button>
                         )}
+                        {latest?.status === "approved" && (
+                          <button onClick={() => syncRecord(latest.id)} disabled={Boolean(approving)} className="focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-emerald-600 hover:bg-emerald-50 disabled:opacity-50">
+                            <Icon name="refresh" size={15} /> {approving === `sync-${latest.id}` ? "Syncing..." : "Sync to EMR"}
+                          </button>
+                        )}
                         {latest?.audio_available && (
                           <button onClick={() => listen(latest.id)} disabled={Boolean(audioLoading)} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9] disabled:opacity-50">
                             <Icon name="play" size={15} /> {audioLoading ? "Getting audio…" : "Listen recording"}
@@ -820,6 +1392,9 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         <button onClick={() => setAction("discharge")} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9]">
                           <Icon name="mic" size={15} /> Generate discharge summary
                         </button>
+                        <button onClick={() => { setActiveTab("handover"); setAction("handover"); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9]">
+                          <Icon name="users" size={15} /> Prepare handover
+                        </button>
                       </div>
                     </details>
                   </div>
@@ -830,7 +1405,11 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                     <button
                       key={tab.id}
                       type="button"
-                      onClick={() => setActiveTab(tab.id)}
+                      onClick={() => {
+                        setActiveTab(tab.id);
+                        setEditingTab(null);
+                        setEditDrafts({});
+                      }}
                       className={activeTab === tab.id ? "whitespace-nowrap border-b-2 border-[#0c716e] pb-3 font-semibold text-[#0c716e]" : "whitespace-nowrap pb-3 hover:text-[#0c716e]"}
                     >
                       {tab.label}
@@ -838,31 +1417,112 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                   ))}
                 </nav>
 
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#e3e9e8] bg-[#f7f9f9] p-3">
+                  <div>
+                    <p className="text-xs font-bold text-[#18232f]">{TOP_TABS.find((item) => item.id === activeTab)?.label}</p>
+                    <p className="mt-1 text-[10px] text-[#829096]">
+                      {activeSectionReview?.is_approved
+                        ? `Approved${activeSectionReview.approved_by ? ` by ${activeSectionReview.approved_by}` : ""}`
+                        : `Patient EMR approved ${chart.approval_percentage}%`}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {editingTab === activeTab ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingTab(null); setEditDrafts({}); }}
+                          disabled={Boolean(sectionBusy)}
+                          className={actionButton}
+                        >
+                          Cancel
+                        </button>
+                        <button type="button" onClick={() => void saveInlineEdits()} disabled={Boolean(sectionBusy)} className={primaryButton}>
+                          <Icon name="file" size={13} />
+                          {sectionBusy === `save-${activeTab}` ? "Saving…" : "Save changes"}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => { setEditingTab(activeTab); setEditDrafts({}); }}
+                        disabled={Boolean(sectionBusy)}
+                        className={actionButton}
+                      >
+                        <Icon name="file" size={13} /> Edit
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void approveSection(activeTab)}
+                      disabled={Boolean(sectionBusy) || Boolean(activeSectionReview?.is_approved) || sectionDeleted}
+                      className={activeSectionReview?.is_approved ? actionButton : primaryButton}
+                    >
+                      <Icon name="shield" size={13} />
+                      {activeSectionReview?.is_approved ? "Approved" : sectionBusy === `approve-${activeTab}` ? "Approving…" : "Approve all"}
+                    </button>
+                  </div>
+                </div>
+
+                {sectionDeleted && (
+                  <div className="mt-4 rounded-xl border border-red-100 bg-red-50 p-5 text-sm text-red-600">
+                    This section is unavailable.
+                  </div>
+                )}
+
+                <div className={sectionDeleted ? "hidden" : ""}>
                 <div className={activeTab === "summary" ? "mt-5 grid gap-3 md:grid-cols-3" : "hidden"}>
-                  <div className="rounded-2xl border border-rose-100 bg-rose-50/50 p-4">
+                  <SummaryBox
+                    itemKey="chief-complaint"
+                    title="Chief Complaint"
+                    value={note?.chief_complaint || patient.subject || "Not documented"}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-rose-100 bg-rose-50/50 p-4"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <div className="flex items-center gap-2 text-[10px] font-semibold text-rose-500">
                       <Icon name="activity" size={13} /> Chief Complaint
                     </div>
                     <p className="mt-2 text-sm leading-5">{note?.chief_complaint || patient.subject || "Not documented"}</p>
-                  </div>
-                  <div className="rounded-2xl border border-violet-100 bg-violet-50/50 p-4">
+                  </SummaryBox>
+                  <SummaryBox
+                    itemKey="primary-diagnosis"
+                    title="Primary Diagnosis"
+                    value={diagnosisPoints[0] || "Not documented"}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-violet-100 bg-violet-50/50 p-4"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <div className="flex items-center gap-2 text-[10px] font-semibold text-violet-500">
                       <Icon name="file" size={13} /> Primary Diagnosis
                     </div>
                     <p className="mt-2 text-sm leading-5">{diagnosisPoints[0] || "Not documented"}</p>
-                  </div>
-                  <div className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4">
+                  </SummaryBox>
+                  <SummaryBox
+                    itemKey="status"
+                    title="Status"
+                    value={latest?.status === "pending_review" ? "Needs review" : latest?.status === "synced_to_emr" ? "Synced" : latest?.status.replaceAll("_", " ") || patient.status.replaceAll("_", " ")}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-sky-100 bg-sky-50/50 p-4"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <div className="flex items-center gap-2 text-[10px] font-semibold text-sky-600">
                       <Icon name="shield" size={13} /> Status
                     </div>
-                    <p className="mt-2 text-sm font-semibold capitalize">{latest?.status.replaceAll("_", " ") || patient.status.replaceAll("_", " ")}</p>
-                  </div>
+                    <p className="mt-2 text-sm font-semibold capitalize">{latest?.status === "pending_review" ? "Needs review" : latest?.status === "synced_to_emr" ? "Synced" : latest?.status.replaceAll("_", " ") || patient.status.replaceAll("_", " ")}</p>
+                  </SummaryBox>
                 </div>
 
                 <section className={activeTab === "summary" ? "mt-4 rounded-2xl border border-emerald-100 bg-emerald-50/30 p-5" : "hidden"}>
                   <div className="flex items-center gap-2">
                     <span className="grid h-9 w-9 place-items-center rounded-xl bg-emerald-100 text-emerald-700"><Icon name="pill" size={17} /></span>
-                    <div><h2 className="text-sm font-bold text-emerald-900">Treatment Plan</h2><p className="mt-0.5 text-[10px] text-emerald-700">Structured by clinical purpose for quick review</p></div>
+                    <h2 className="text-sm font-bold text-emerald-900">Treatment Plan</h2>
                   </div>
                   {treatmentSections.length ? (
                     <div className="mt-5 grid gap-4 lg:grid-cols-2">
@@ -874,15 +1534,26 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                           violet: "border-violet-100 bg-white text-violet-700",
                           slate: "border-slate-200 bg-white text-slate-700",
                         };
+                        const itemKey = `treatment-${section.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "")}`;
                         return (
-                          <article key={section.title} className={`rounded-xl border p-4 ${tones[section.tone]}`}>
+                          <SummaryBox
+                            key={section.title}
+                            itemKey={itemKey}
+                            title={section.title}
+                            value={section.items.join("\n")}
+                            review={activeSectionReview}
+                            className={`rounded-xl border p-4 ${tones[section.tone]}`}
+                            editMode={editingTab === "summary"}
+                            onChange={editValue}
+                            onDelete={(key, title) => void deleteTabItem("summary", key, title)}
+                          >
                             <h3 className="flex items-center gap-2 text-xs font-bold"><Icon name={section.icon} size={15} /> {section.title}<span className="ml-auto rounded-full bg-black/5 px-2 py-0.5 text-[9px]">{section.items.length}</span></h3>
                             <ul className="mt-3 space-y-2.5">
                               {section.items.map((item, index) => (
                                 <li key={`${item}-${index}`} className="grid grid-cols-[8px_1fr] gap-2 text-sm leading-5 text-[#26353b]"><span className="mt-2 h-1.5 w-1.5 rounded-full bg-[#19a77e]" /><span>{item}</span></li>
                               ))}
                             </ul>
-                          </article>
+                          </SummaryBox>
                         );
                       })}
                     </div>
@@ -892,17 +1563,35 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                 {error && <p className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-600">{error}</p>}
                 {audioUrl && (
                   <div className="mt-5 rounded-lg border border-[#dfe7e6] bg-[#f7f9f9] p-4">
-                    <p className="mb-2 font-mono text-[9px] uppercase tracking-wide text-[#0c716e]">Original consultation recording · private link</p>
+                    <p className="mb-2 font-mono text-[9px] uppercase tracking-wide text-[#0c716e]">Consultation recording</p>
                     <audio controls autoPlay src={audioUrl} className="w-full" />
                   </div>
                 )}
 
                 <div className={activeTab === "summary" ? "mt-6 grid gap-4 lg:grid-cols-2" : "hidden"}>
-                  <div className="rounded-2xl border border-[#e3e9e8] p-5">
+                  <SummaryBox
+                    itemKey="clinical-summary"
+                    title="Clinical Summary"
+                    value={note?.subjective || note?.assessment || "No clinical summary documented."}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-[#e3e9e8] p-5"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <h3 className="mb-3 text-sm font-bold">Clinical Summary</h3>
                     <PointList value={note?.subjective || note?.assessment} empty="No clinical summary documented." />
-                  </div>
-                  <div className="rounded-2xl border border-[#e3e9e8] p-5">
+                  </SummaryBox>
+                  <SummaryBox
+                    itemKey="patient-vitals"
+                    title="Patient Vitals"
+                    value={vitals.map((vital) => `${vital.label}: ${vital.value}${vital.unit ? ` ${vital.unit}` : ""}`).join("\n")}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-[#e3e9e8] p-5"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <div className="mb-3 flex items-center justify-between">
                       <h3 className="text-sm font-bold">Patient Vitals (Latest)</h3>
                       <button type="button" onClick={() => setActiveTab("clinical")} className="text-[10px] font-semibold text-[#0c716e]">
@@ -918,11 +1607,27 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         </div>
                       ))}
                     </div>
-                  </div>
+                    {vitals.some((vital) => vital.capturedAt) && (
+                      <p className="mt-3 text-[9px] text-[#9aa7ac]">
+                        Automatically captured from the latest clinical encounter ·{" "}
+                        {new Date(vitals.find((vital) => vital.capturedAt)?.capturedAt || "").toLocaleString()} by{" "}
+                        {vitals.find((vital) => vital.capturedBy)?.capturedBy || workspace.current_user.full_name}
+                      </p>
+                    )}
+                  </SummaryBox>
                 </div>
 
                 <div className={activeTab === "summary" ? "mt-4 grid gap-4 lg:grid-cols-2" : "hidden"}>
-                  <div className="rounded-2xl border border-[#e3e9e8] p-5">
+                  <SummaryBox
+                    itemKey="active-diagnoses"
+                    title="Active Diagnoses"
+                    value={diagnosisPoints.join("\n") || "No diagnosis documented."}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-[#e3e9e8] p-5"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <div className="mb-3 flex items-center justify-between">
                       <h3 className="text-sm font-bold">Active Diagnoses</h3>
                       <button type="button" onClick={() => setActiveTab("diagnoses")} className="text-[10px] font-semibold text-[#0c716e]">
@@ -941,8 +1646,17 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                     ) : (
                       <p className="text-sm text-[#9aa7ac]">No diagnosis documented.</p>
                     )}
-                  </div>
-                  <div className="rounded-2xl border border-[#e3e9e8] p-5">
+                  </SummaryBox>
+                  <SummaryBox
+                    itemKey="allergies-risk-factors"
+                    title="Allergies & Risk Factors"
+                    value={["No known drug allergies", ...(note?.symptoms || [])].join("\n")}
+                    review={activeSectionReview}
+                    className="rounded-2xl border border-[#e3e9e8] p-5"
+                    editMode={editingTab === "summary"}
+                    onChange={editValue}
+                    onDelete={(itemKey, title) => void deleteTabItem("summary", itemKey, title)}
+                  >
                     <h3 className="mb-3 text-sm font-bold">Allergies &amp; Risk Factors</h3>
                     <p className="text-[10px] font-semibold text-red-500">Allergies</p>
                     <p className="mt-1 flex items-center gap-2 text-xs text-[#51616b]">
@@ -960,7 +1674,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         </div>
                       </>
                     )}
-                  </div>
+                  </SummaryBox>
                 </div>
               </div>
 
@@ -970,22 +1684,33 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                     <thead>
                       <tr className="border-y border-[#eef2f1] bg-[#f7f9f9] text-[#9aa7ac]">
                         <th className="px-3 py-2 font-semibold">Date</th>
-                        <th className="px-3 py-2 font-semibold">Consultation</th>
-                        <th className="px-3 py-2 font-semibold">Assessment</th>
+                        <th className="px-3 py-2 font-semibold">Encounter summary</th>
+                        <th className="px-3 py-2 font-semibold">Captured by</th>
                         <th className="px-3 py-2 font-semibold">Status</th>
                         <th className="px-3 py-2 font-semibold">Recording</th>
+                        <th className="px-3 py-2 font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {chart.records.map((record) => (
-                        <tr key={record.id} className="border-b border-[#eef2f1]">
+                      {chart.records.map((record) => {
+                        const itemKey = `encounter-${record.id}`;
+                        if (itemDeleted("timeline", itemKey)) return null;
+                        const baseValue = record.encounter_summary || record.structured_note?.chief_complaint || "Clinical encounter";
+                        const value = itemValue("timeline", itemKey, baseValue);
+                        return <tr key={record.id} className="border-b border-[#eef2f1]">
                           <td className="px-3 py-3">{new Date(record.created_at).toLocaleString()}</td>
-                          <td className="px-3 py-3 font-medium">{record.structured_note?.chief_complaint || "Clinical consultation"}</td>
-                          <td className="max-w-md px-3 py-3 text-[#51616b]">{record.structured_note?.assessment || "Not documented"}</td>
-                          <td className="px-3 py-3 uppercase text-[#0c716e]">{record.status.replaceAll("_", " ")}</td>
+                          <td className="max-w-lg px-3 py-3">
+                            <InlineContent editing={editingTab === "timeline"} value={value} onChange={(next) => editValue(itemKey, next)}>
+                              <p className="whitespace-pre-wrap font-medium">{value}</p>
+                            </InlineContent>
+                            {record.department && <p className="mt-1 text-[10px] text-[#9aa7ac]">{record.department}</p>}
+                          </td>
+                          <td className="px-3 py-3 text-[#51616b]">{record.captured_by || patient.doctor_name || workspace.current_user.full_name}</td>
+                          <td className="px-3 py-3 uppercase text-[#0c716e]">{record.status === "pending_review" ? "Needs review" : record.status === "synced_to_emr" ? "Synced" : record.status.replaceAll("_", " ")}</td>
                           <td className="px-3 py-3">{record.audio_available ? <button onClick={() => listen(record.id)} className="text-[#0c716e] hover:underline">Listen</button> : "—"}</td>
+                          <td className="px-3 py-3">{!sectionReview("timeline")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("timeline", itemKey, "encounter")} />}</td>
                         </tr>
-                      ))}
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -994,12 +1719,18 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
               {activeTab === "diagnoses" && <ClinicalSection id="diagnosis" title="Diagnoses">
                 {diagnosisPoints.length ? (
                   <ol className="space-y-2">
-                    {diagnosisPoints.map((item, index) => (
-                      <li key={item} className="grid grid-cols-[24px_1fr] text-sm">
+                    {diagnosisPoints.map((item, index) => {
+                      const itemKey = `diagnosis-${index}`;
+                      if (itemDeleted("diagnoses", itemKey)) return null;
+                      const value = itemValue("diagnoses", itemKey, item);
+                      return <li key={`${item}-${index}`} className="grid grid-cols-[24px_1fr_auto] items-start gap-2 rounded-lg border border-[#eef2f1] p-3 text-sm">
                         <span className="font-mono text-[#9aa7ac]">{index + 1}</span>
-                        <span>{item}</span>
+                        <InlineContent editing={editingTab === "diagnoses"} value={value} onChange={(next) => editValue(itemKey, next)}>
+                          <span className="whitespace-pre-wrap">{value}</span>
+                        </InlineContent>
+                        {!sectionReview("diagnoses")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("diagnoses", itemKey, "diagnosis")} />}
                       </li>
-                    ))}
+                    })}
                   </ol>
                 ) : (
                   <p className="text-sm text-[#9aa7ac]">No diagnosis documented.</p>
@@ -1017,19 +1748,32 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         <th className="px-3 py-2 font-semibold">Frequency</th>
                         <th className="px-3 py-2 font-semibold">Duration</th>
                         <th className="px-3 py-2 font-semibold">Status</th>
+                        <th className="px-3 py-2 font-semibold">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {orders.map((order, index) => (
-                        <tr key={order.id} className="border-b border-[#eef2f1]">
+                      {orders.map((order, index) => {
+                        const rowKey = `medication-${order.id}`;
+                        if (itemDeleted("medications", rowKey)) return null;
+                        const fields = {
+                          name: itemValue("medications", `${rowKey}-name`, order.name),
+                          dosage: itemValue("medications", `${rowKey}-dosage`, order.dosage),
+                          frequency: itemValue("medications", `${rowKey}-frequency`, order.frequency),
+                          duration: itemValue("medications", `${rowKey}-duration`, order.duration),
+                          status: itemValue("medications", `${rowKey}-status`, order.status),
+                        };
+                        return <tr key={order.id} className="border-b border-[#eef2f1] align-top">
                           <td className="px-3 py-3 font-mono text-[#9aa7ac]">{index + 1}</td>
-                          <td className="px-3 py-3 font-semibold uppercase">{order.name}</td>
-                          <td className="px-3 py-3">{order.dosage}</td>
-                          <td className="px-3 py-3">{order.frequency}</td>
-                          <td className="px-3 py-3">{order.duration}</td>
-                          <td className="px-3 py-3 text-[#0c716e]">{order.status}</td>
+                          {(["name", "dosage", "frequency", "duration", "status"] as const).map((field) => (
+                            <td key={field} className={`px-3 py-3 ${field === "name" ? "font-semibold uppercase" : ""} ${field === "status" ? "text-[#0c716e]" : ""}`}>
+                              <InlineContent editing={editingTab === "medications"} value={fields[field]} onChange={(next) => editValue(`${rowKey}-${field}`, next)}>
+                                <span className="whitespace-pre-wrap">{fields[field]}</span>
+                              </InlineContent>
+                            </td>
+                          ))}
+                          <td className="px-3 py-3">{!sectionReview("medications")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("medications", rowKey, order.name)} />}</td>
                         </tr>
-                      ))}
+                      })}
                     </tbody>
                   </table>
                   {!orders.length && <p className="py-4 text-sm text-[#9aa7ac]">No medication orders documented.</p>}
@@ -1038,8 +1782,13 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
 
               {activeTab === "reports" && <ClinicalSection id="reports" title="Diagnostics &amp; Uploaded Reports" action={<button onClick={() => setAction("report")} className={actionButton}><Icon name="upload" size={13} /> Upload report</button>}>
                 <div className="space-y-3">
-                  {chart.reports.map((report) => (
-                    <article key={report.id} className="rounded-xl border border-[#e3e9e8] p-4">
+                  {chart.reports.map((report) => {
+                    const itemKey = `report-${report.id}`;
+                    if (itemDeleted("reports", itemKey)) return null;
+                    const baseValue = [report.title, report.summary, ...report.key_findings].filter(Boolean).join("\n");
+                    const value = itemValue("reports", itemKey, baseValue);
+                    const hasOverride = value !== baseValue;
+                    return <article key={report.id} className="rounded-xl border border-[#e3e9e8] p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <h3 className="text-sm font-semibold">{report.title}</h3>
@@ -1057,8 +1806,16 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                             </button>
                           )}
                           <ReportState status={report.status} />
+                          {!sectionReview("reports")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("reports", itemKey, report.title)} />}
                         </div>
                       </div>
+                      {(editingTab === "reports" || hasOverride) && (
+                        <div className="mt-4 rounded-lg bg-[#f7f9f9] p-3">
+                          <InlineContent editing={editingTab === "reports"} value={value} onChange={(next) => editValue(itemKey, next)}>
+                            <PointList value={value} />
+                          </InlineContent>
+                        </div>
+                      )}
                       {report.status === "ready" && <p className="mt-3 rounded-lg bg-blue-50 p-3 text-xs text-blue-600">Review this generated summary and approve it before it can be included in a discharge summary.</p>}
                       {report.status === "approved" && <p className="mt-3 rounded-lg bg-emerald-50 p-3 text-xs text-emerald-600">Approved for inclusion in future discharge summaries.</p>}
                       {report.status === "needs_reupload" && (
@@ -1072,10 +1829,10 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                       )}
                       {["queued", "processing"].includes(report.status) && (
                         <div className="mt-3">
-                          <HeartbeatLoader label={report.status === "processing" ? "Reading the document and generating a structured report…" : "Report generation queued…"} />
+                          <HeartbeatLoader label="Preparing report…" />
                         </div>
                       )}
-                      {report.summary && (
+                      {!hasOverride && editingTab !== "reports" && report.summary && (
                         <div className="mt-4">
                           <p className="text-xs font-semibold uppercase text-[#9aa7ac]">Summary</p>
                           <PointList value={report.summary} />
@@ -1095,8 +1852,82 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         </div>
                       )}
                     </article>
-                  ))}
+                  })}
                   {!chart.reports.length && <p className="text-sm text-[#9aa7ac]">No reports uploaded.</p>}
+                </div>
+              </ClinicalSection>}
+
+              {activeTab === "handover" && <ClinicalSection id="handover" title="Clinical Handovers" action={<button onClick={() => setAction("handover")} className={primaryButton}><Icon name="mic" size={13} /> Prepare handover</button>}>
+                <div className="space-y-4">
+                  {(chart.handovers || []).map((job) => {
+                    const data = job.summary_data || {};
+                    const section = (key: string) => (Array.isArray(data[key]) ? (data[key] as string[]) : []);
+                    const sections = [
+                      ["Situation", "situation"],
+                      ["Background", "background"],
+                      ["Assessment", "assessment"],
+                      ["Recommendations", "recommendations"],
+                      ["Immediate priorities", "immediate_priorities"],
+                      ["Risks & watchouts", "risks_and_watchouts"],
+                      ["Pending actions", "pending_actions"],
+                      ["Contingency plan", "contingency_plan"],
+                      ["Clinical reasoning", "clinical_reasoning"],
+                    ];
+                    return (
+                      <article key={job.id} className="rounded-xl border border-[#dfe7e6] bg-white p-5">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-bold">Handover to {job.handed_over_to || "Not assigned"}</h3>
+                            <p className="mt-1 text-[10px] text-[#829096]">
+                              Recorded {new Date(job.recorded_at).toLocaleString()} by {job.captured_by}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button onClick={() => setAssigningHandover(job.id)} className={job.handed_over_to ? actionButton : primaryButton}>
+                              <Icon name="users" size={13} /> {job.handed_over_to ? "Change recipient" : "Assign recipient"}
+                            </button>
+                            {job.audio_available && <button onClick={() => listenHandover(job.id)} disabled={audioLoading === job.id} className={actionButton}><Icon name="play" size={13} /> {audioLoading === job.id ? "Loading…" : "Listen"}</button>}
+                            <ReportState status={job.status} />
+                          </div>
+                        </div>
+                        {["queued", "transcribing", "generating_summary"].includes(job.status) && (
+                          <div className="mt-4"><HeartbeatLoader label="Preparing handover…" /></div>
+                        )}
+                        {job.status === "failed" && <p className="mt-4 rounded-lg bg-red-50 p-3 text-xs text-red-600">{job.error_message || "Handover generation failed."}</p>}
+                        {job.status === "ready" && (
+                          <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                            {sections.map(([label, key]) => {
+                              const itemKey = `handover-${job.id}-${key.replaceAll("_", "-")}`;
+                              if (itemDeleted("handover", itemKey)) return null;
+                              const override = itemValue("handover", itemKey, "");
+                              const value = override || section(key).join("\n") || "Not documented";
+                              return <section key={key} className={`rounded-xl border p-4 ${key === "clinical_reasoning" ? "border-violet-100 bg-violet-50/40 lg:col-span-2" : "border-[#eef2f1] bg-[#f9fbfb]"}`}>
+                                <div className="mb-3 flex items-center justify-between gap-2">
+                                  <h4 className={`text-[10px] font-bold uppercase tracking-wide ${key === "clinical_reasoning" ? "text-violet-700" : "text-[#0c716e]"}`}>{label}</h4>
+                                  {!sectionReview("handover")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("handover", itemKey, label)} />}
+                                </div>
+                                <InlineContent editing={editingTab === "handover"} value={value} onChange={(next) => editValue(itemKey, next)}>
+                                {override ? <PointList value={value} /> : section(key).length ? (
+                                  <ul className="space-y-2">
+                                    {section(key).map((item, index) => <li key={`${item}-${index}`} className="grid grid-cols-[14px_1fr] gap-1 text-xs leading-5"><span className="text-[#0c716e]">•</span><span>{item}</span></li>)}
+                                  </ul>
+                                ) : <p className="text-xs text-[#9aa7ac]">Not documented</p>}
+                                </InlineContent>
+                              </section>
+                            })}
+                          </div>
+                        )}
+                      </article>
+                    );
+                  })}
+                  {!chart.handovers?.length && (
+                    <div className="rounded-xl border border-dashed border-[#cddad8] bg-[#f9fbfb] p-8 text-center">
+                      <Icon name="users" size={24} className="mx-auto text-[#0c716e]" />
+                      <h3 className="mt-3 text-sm font-bold">No handover prepared yet</h3>
+                      <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-[#829096]">Record a patient update and choose the receiving clinician.</p>
+                      <button onClick={() => setAction("handover")} className={`${primaryButton} mt-4`}><Icon name="mic" size={13} /> Prepare first handover</button>
+                    </div>
+                  )}
                 </div>
               </ClinicalSection>}
 
@@ -1111,7 +1942,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                           <div>
                             <h3 className="text-sm font-semibold">Discharge summary draft</h3>
                             <p className="mt-1 text-[10px] text-[#9aa7ac]">
-                              {new Date(job.created_at).toLocaleString()} · {job.source_language === "unknown" ? "Language auto-detected" : job.source_language}
+                              {new Date(job.created_at).toLocaleString()}
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -1129,17 +1960,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         </div>
                         {["queued", "transcribing", "generating_summary", "generating_pdf"].includes(job.status) && (
                           <div className="mt-4">
-                            <HeartbeatLoader
-                              label={
-                                job.status === "transcribing"
-                                  ? "Listening and translating discharge instructions…"
-                                  : job.status === "generating_summary"
-                                    ? "Combining EMR, reports, medications, and instructions…"
-                                    : job.status === "generating_pdf"
-                                      ? "Rendering and securely saving the discharge PDF…"
-                                      : "Discharge workflow queued…"
-                              }
-                            />
+                            <HeartbeatLoader label="Preparing discharge summary…" />
                           </div>
                         )}
                         {job.status === "failed" && <p className="mt-4 rounded-lg bg-red-50 p-3 text-xs text-red-600">{job.error_message || "Discharge summary generation failed."}</p>}
@@ -1159,10 +1980,18 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                               ["Follow-up", "follow_up"],
                               ["Discharge instructions", "discharge_instructions"],
                               ["Warning signs", "warning_signs"],
-                            ].map(([label, key]) => (
-                              <div key={key} className="rounded-lg bg-[#f7f9f9] p-4">
-                                <h4 className="mb-3 text-[10px] font-bold uppercase tracking-wide text-[#0c716e]">{label}</h4>
-                                {section(key).length ? (
+                            ].map(([label, key]) => {
+                              const itemKey = `document-${job.id}-${key.replaceAll("_", "-")}`;
+                              if (itemDeleted("documents", itemKey)) return null;
+                              const override = itemValue("documents", itemKey, "");
+                              const value = override || section(key).join("\n") || "Not documented";
+                              return <div key={key} className="rounded-lg bg-[#f7f9f9] p-4">
+                                <div className="mb-3 flex items-center justify-between gap-2">
+                                  <h4 className="text-[10px] font-bold uppercase tracking-wide text-[#0c716e]">{label}</h4>
+                                  {!sectionReview("documents")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("documents", itemKey, label)} />}
+                                </div>
+                                <InlineContent editing={editingTab === "documents"} value={value} onChange={(next) => editValue(itemKey, next)}>
+                                {override ? <PointList value={value} /> : section(key).length ? (
                                   <ul className="space-y-2">
                                     {section(key).map((item) => (
                                       <li key={item} className="grid grid-cols-[16px_1fr] text-xs leading-5">
@@ -1174,8 +2003,9 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                                 ) : (
                                   <p className="text-xs text-[#9aa7ac]">Not documented</p>
                                 )}
+                                </InlineContent>
                               </div>
-                            ))}
+                            })}
                           </div>
                         )}
                       </article>
@@ -1185,49 +2015,42 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                 </div>
               </ClinicalSection>}
 
-              {activeTab === "clinical" && <ClinicalSection id="emr-summary" title="Structured EMR Summary">
-                {note ? (
+              {activeTab === "clinical" && <ClinicalSection id="emr-summary" title="EMR Summary">
+                {chart.records.some((record) => record.structured_note) ? (
                   <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-xl border border-[#e3e9e8] p-4 lg:col-span-2">
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Chief complaint</h3>
-                      <PointList value={note.chief_complaint} />
-                    </div>
-                    <div className="rounded-xl border border-[#e3e9e8] p-4">
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Subjective</h3>
-                      <PointList value={note.subjective} />
-                    </div>
-                    <div className="rounded-xl border border-[#e3e9e8] p-4">
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Objective</h3>
-                      <PointList value={note.objective} />
-                    </div>
-                    <div className="rounded-xl border border-[#e3e9e8] p-4">
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Assessment</h3>
-                      <PointList value={note.assessment} />
-                    </div>
-                    <div className="rounded-xl border border-[#e3e9e8] p-4">
-                      <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Plan</h3>
-                      <PointList value={note.plan} />
-                    </div>
-                    {note.symptoms.length > 0 && (
-                      <div className="rounded-xl border border-[#e3e9e8] p-4">
-                        <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Symptoms</h3>
-                        <PointList value={note.symptoms.join(". ")} />
-                      </div>
-                    )}
-                    {note.diagnoses.length > 0 && (
-                      <div className="rounded-xl border border-[#e3e9e8] p-4">
-                        <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">Diagnoses</h3>
-                        <PointList value={note.diagnoses.join(". ")} />
-                      </div>
-                    )}
+                    {longitudinalSections.filter((section) => section.entries.length).map((section) => (
+                      <section key={section.key} className={`rounded-xl border border-[#e3e9e8] p-4 ${section.key === "chief_complaint" ? "lg:col-span-2" : ""}`}>
+                        <h3 className="mb-3 text-xs font-bold uppercase tracking-wide text-[#0c716e]">{section.label}</h3>
+                        <div className="space-y-4">
+                          {section.entries.map(({ text, record }) => {
+                            const itemKey = `clinical-${section.key.replaceAll("_", "-")}-${record.id}`;
+                            if (itemDeleted("clinical", itemKey)) return null;
+                            const value = itemValue("clinical", itemKey, text);
+                            return <article key={record.id} className="rounded-lg bg-[#f7f9f9] p-3">
+                              <div className="mb-2 flex justify-end">
+                                {!sectionReview("clinical")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("clinical", itemKey, section.label)} />}
+                              </div>
+                              <InlineContent editing={editingTab === "clinical"} value={value} onChange={(next) => editValue(itemKey, next)}>
+                                <PointList value={value} />
+                              </InlineContent>
+                              <p className="mt-2 border-t border-[#e8eeed] pt-2 text-[9px] text-[#829096]">
+                                Captured {new Date(record.created_at).toLocaleString()} by {record.captured_by || patient.doctor_name || workspace.current_user.full_name}
+                                {record.department ? ` · ${record.department}` : ""}
+                              </p>
+                            </article>
+                          })}
+                        </div>
+                      </section>
+                    ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-[#9aa7ac]">No structured EMR is available yet.</p>
+                  <p className="text-sm text-[#9aa7ac]">No EMR note is available yet.</p>
                 )}
               </ClinicalSection>}
+                </div>
 
               <p className="px-5 py-4 text-[10px] text-[#9aa7ac] sm:px-7">
-                Created: {latest ? new Date(latest.created_at).toLocaleString() : "—"} by {patient.doctor_name || workspace.current_user.full_name}
+                Created: {latest ? new Date(latest.created_at).toLocaleString() : "—"} by {latest?.captured_by || patient.doctor_name || workspace.current_user.full_name}
                 {" · "}Last updated: {chart.records[0] ? new Date(chart.records[0].created_at).toLocaleString() : "—"}
               </p>
             </div>
@@ -1299,6 +2122,8 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
       {action === "voice-encounter" && <VoiceEncounterModal patientId={patient.id} onClose={() => setAction(null)} onQueued={() => { setEncounterQueued(true); setActiveTab("timeline"); void load(); }} />}
       {action === "medication" && <AddMedicationModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "discharge" && <DischargeRecordingModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
+      {action === "handover" && <HandoverRecordingModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
+      {assigningHandover && <AssignHandoverModal patientId={patient.id} handoverId={assigningHandover} onClose={() => setAssigningHandover(null)} onDone={() => void load()} />}
       {action === "edit-patient" && <EditPatientModal patient={patient} onClose={() => setAction(null)} onDone={() => void load()} />}
     </div>
   );

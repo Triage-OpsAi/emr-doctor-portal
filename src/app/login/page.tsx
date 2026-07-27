@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { apiFetch, clinicalLogin, hasSession } from "@/lib/api";
+import { AUDIT_EVENTS, queueAuditEvent } from "@/lib/audit";
 import type { Workspace } from "@/lib/types";
 
 export default function LoginPage() {
@@ -34,6 +35,12 @@ export default function LoginPage() {
         String(form.get("hospital_code")),
       );
       const workspace = await apiFetch<Workspace>("/doctor/workspace");
+      queueAuditEvent({
+        action: AUDIT_EVENTS.USER_LOGIN,
+        event_category: "authentication",
+        resource_type: "session",
+        event_metadata: { hospital_code: String(form.get("hospital_code")) },
+      });
       router.replace(workspace.workspace_path);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to sign in");

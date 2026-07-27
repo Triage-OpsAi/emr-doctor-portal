@@ -1,0 +1,23 @@
+
+> doctor-portal@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.11 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.5:3000
+- Environments: .env
+✓ Ready in 1230ms
+Creating turbopack project {
+  dir: 'C:\\Users\\LENOVO\\Downloads\\healthai-platform-2\\doctor-portal',
+  testMode: true
+}
+
+ GET /rainbow-demo-hospital/fMfdscIwR-z8OPXc_OBg1PJO3wjlymXk09ZtZLiKI3nxuymwgv2KUeCoC67gknPpnFk8vd-XTsovt9iijSHYDA/patient/18a385f9-c088-4bff-be04-18fc7b9423c1 200 in 2.0s (next.js: 1574ms, application-code: 460ms)
+ GET /login 200 in 1684ms (next.js: 1483ms, application-code: 201ms)
+ GET /accept-invitation 200 in 1419ms (next.js: 1307ms, application-code: 113ms)
+ GET /rainbow-demo-hospital/fMfdscIwR-z8OPXc_OBg1PJO3wjlymXk09ZtZLiKI3nxuymwgv2KUeCoC67gknPpnFk8vd-XTsovt9iijSHYDA 200 in 2.0s (next.js: 1961ms, application-code: 89ms)
+ GET /rainbow-demo-hospital/fMfdscIwR-z8OPXc_OBg1PJO3wjlymXk09ZtZLiKI3nxuymwgv2KUeCoC67gknPpnFk8vd-XTsovt9iijSHYDA/patient/18a385f9-c088-4bff-a111-111111111111 200 in 132ms (next.js: 20ms, application-code: 112ms)
+ GET /login 200 in 88ms (next.js: 16ms, application-code: 72ms)
+ GET /accept-invitation 200 in 68ms (next.js: 11ms, application-code: 57ms)
+ GET /rainbow-demo-hospital/fMfdscIwR-z8OPXc_OBg1PJO3wjlymXk09ZtZLiKI3nxuymwgv2KUeCoC67gknPpnFk8vd-XTsovt9iijSHYDA 200 in 100ms (next.js: 19ms, application-code: 81ms)
+ GET /rainbow-demo-hospital/fMfdscIwR-z8OPXc_OBg1PJO3wjlymXk09ZtZLiKI3nxuymwgv2KUeCoC67gknPpnFk8vd-XTsovt9iijSHYDA/patient/18a385f9-c088-4bff-a111-111111111111 200 in 207ms (next.js: 21ms, application-code: 186ms)
