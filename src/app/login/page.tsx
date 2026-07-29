@@ -5,13 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { ThemeToggle } from "@/components/ThemeProvider";
-import { apiFetch, clinicalLogin, hasSession } from "@/lib/api";
+import { apiFetch, clinicalLogin, fetchClinicalHospitalCode, hasSession } from "@/lib/api";
 import { AUDIT_EVENTS, queueAuditEvent } from "@/lib/audit";
 import type { Workspace } from "@/lib/types";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
   const [hospitalCode, setHospitalCode] = useState("");
+  const [hospitalCodeStatus, setHospitalCodeStatus] = useState<"idle" | "loading" | "found" | "missing">("idle");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -24,6 +26,31 @@ export default function LoginPage() {
       .then((workspace) => router.replace(workspace.workspace_path))
       .catch(() => undefined);
   }, [router]);
+
+  useEffect(() => {
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setHospitalCodeStatus("loading");
+      try {
+        const code = await fetchClinicalHospitalCode(email, controller.signal);
+        setHospitalCode(code);
+        setHospitalCodeStatus("found");
+      } catch {
+        if (controller.signal.aborted) return;
+        setHospitalCode("");
+        setHospitalCodeStatus("missing");
+      }
+    }, 400);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [email]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -124,7 +151,11 @@ export default function LoginPage() {
                 <span className="mb-2 block text-[11px] font-semibold text-[var(--muted)]">Work email</span>
                 <span className="relative block">
                   <Icon name="mail" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
-                  <input name="email" type="email" required autoComplete="email" placeholder="doctor@hospital.com" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                  <input name="email" type="email" required autoComplete="email" value={email} onChange={(event) => {
+                    setEmail(event.target.value.trim());
+                    setHospitalCode("");
+                    setHospitalCodeStatus("idle");
+                  }} placeholder="doctor@hospital.com" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
                 </span>
               </label>
               <label className="block">
@@ -137,11 +168,13 @@ export default function LoginPage() {
               <label className="block">
                 <span className="mb-2 flex items-center justify-between gap-3 text-[11px] font-semibold text-[var(--muted)]">
                   <span>Hospital code</span>
-                  <span className="font-mono text-[8px] font-normal uppercase tracking-[.12em] text-[var(--faint)]">From your invitation</span>
+                  <span className="font-mono text-[8px] font-normal uppercase tracking-[.12em] text-[var(--faint)]">
+                    {hospitalCodeStatus === "loading" ? "Finding workspace..." : hospitalCodeStatus === "found" ? "Found from email" : hospitalCodeStatus === "missing" ? "Not found — enter code" : "Fetched from your email"}
+                  </span>
                 </span>
                 <span className="relative block">
                   <Icon name="building" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
-                  <input name="hospital_code" required autoCapitalize="characters" spellCheck={false} value={hospitalCode} onChange={(event) => setHospitalCode(event.target.value)} placeholder="RAINBO-BLR" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 font-mono text-sm uppercase tracking-[.08em] transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                  <input name="hospital_code" required readOnly={hospitalCodeStatus === "loading" || hospitalCodeStatus === "found"} aria-busy={hospitalCodeStatus === "loading"} autoCapitalize="characters" spellCheck={false} value={hospitalCode} onChange={(event) => setHospitalCode(event.target.value.toUpperCase())} placeholder={hospitalCodeStatus === "loading" ? "LOOKING UP..." : hospitalCodeStatus === "missing" ? "ENTER HOSPITAL CODE" : "ENTER YOUR WORK EMAIL"} className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 font-mono text-sm uppercase tracking-[.08em] transition placeholder:text-[var(--faint)] read-only:cursor-default" />
                 </span>
               </label>
               <button disabled={submitting} className="focus-ring mt-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--teal)] text-sm font-semibold text-[#07110f] shadow-[0_12px_30px_rgba(43,175,158,.18)] transition hover:-translate-y-0.5 hover:brightness-105 disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60">

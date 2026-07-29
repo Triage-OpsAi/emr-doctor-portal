@@ -94,3 +94,21 @@ export async function clinicalLogin(email: string, password: string, hospitalCod
   const tokens = await response.json();
   storeTokens(tokens.access_token, tokens.refresh_token);
 }
+
+export async function fetchClinicalHospitalCode(
+  email: string,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(`${API_URL}/auth/clinical/hospital-code`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+    signal,
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    throw new Error(payload.detail || "No hospital workspace was found for this email");
+  }
+  const payload = (await response.json()) as { hospital_code: string };
+  return payload.hospital_code;
+}
