@@ -298,3 +298,53 @@ export type AuditEventList = {
   events: AuditEvent[];
   total: number;
 };
+
+export type WardVoiceTask = {
+  id: string; bed_id: string; bed_number: string; patient_id: string;
+  patient_name: string; patient_age: number | null; protocol: string | null;
+  doctor_name: string | null; title: string; task_type: string; status: string;
+  due_at: string; completed_at: string | null;
+};
+
+export type WardVoiceBed = {
+  id: string; bed_number: string; patient_id: string | null; patient_name: string | null;
+  patient_age: number | null; protocol: string | null; nurse_name: string | null;
+  last_entry_at: string | null; next_due_at: string | null; fluid_balance_ml: number;
+  completed_tasks: number; total_tasks: number; status: string;
+};
+
+export type WardVoiceOverview = {
+  ward_id: string | null; ward_name: string | null; ward_code: string | null;
+  kpis: { due_next_hour: number; overdue: number; done_this_shift: number; on_time_percentage: number };
+  tasks: WardVoiceTask[];
+  beds: WardVoiceBed[];
+  handover: { bed_id: string; bed_number: string; patient_name: string; text: string; priority: string }[];
+  compliance: { on_time_percentage: number; closed_by_08_percentage: number; iv_checks_percentage: number; arithmetic_errors: number };
+  audit: { id: string; action: string; resource_type: string; patient_id: string | null; user_name: string; details: Record<string, unknown> | null; created_at: string }[];
+  pending_countersigns: number;
+};
+
+export type WardVoiceObservation = {
+  observation_type: string; value_numeric: number | null; value_text: string | null;
+  unit: string | null; confidence: number | null; requires_countersign: boolean;
+};
+
+export type WardVoiceCaptureResult = {
+  capture_id: string; status: string; raw_transcript: string | null;
+  translated_text: string | null; observations: WardVoiceObservation[]; error_message: string | null;
+};
+
+export type FluidChart = {
+  bed_id: string; bed_number: string; patient_id: string; patient_name: string;
+  patient_age: number | null; protocol: string | null; chart_date: string;
+  intake_ml: number; output_ml: number; iv_running_ml: number; balance_ml: number;
+  entries: { id: string; occurred_at: string; direction: string; category: string; amount_ml: number; source: string; notes: string | null; recorded_by: string }[];
+  infusions: { id: string; fluid_name: string; rate_ml_per_hour: number; started_at: string; stopped_at: string | null; calculated_ml: number }[];
+  is_closed: boolean; closed_at: string | null;
+};
+
+export type WardCountersign = {
+  id: string; capture_id: string; bed_number: string; patient_name: string;
+  observation_type: string; value_numeric: number | null; value_text: string | null;
+  unit: string | null; confirmed_by: string; confirmed_at: string;
+};

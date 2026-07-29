@@ -4,6 +4,7 @@ import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState 
 import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { Icon, IconName } from "@/components/Icon";
+import { WardVoice } from "@/components/WardVoice";
 import { apiFetch, clearTokens, hasSession } from "@/lib/api";
 import {
   AUDIT_EVENT_LABELS,
@@ -29,10 +30,11 @@ import type {
   Workspace,
 } from "@/lib/types";
 
-type Tab = "home" | "users" | "network" | "library" | "audit" | "settings";
+type Tab = "home" | "ward-voice" | "users" | "network" | "library" | "audit" | "settings";
 
 const NAV: { id: Tab; label: string; icon: IconName; permission?: string }[] = [
   { id: "home", label: "Home", icon: "home" },
+  { id: "ward-voice", label: "Ward Voice", icon: "mic", permission: "emr:read" },
   { id: "users", label: "Users", icon: "users", permission: "users:manage" },
   { id: "network", label: "My Network", icon: "network", permission: "network:manage" },
   { id: "library", label: "EHR Library", icon: "library" },
@@ -1375,6 +1377,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
           </div>
         </div>
         {tab === "home" && <Dashboard workspace={workspace} records={records} voiceJobs={voiceJobs} loading={recordsLoading} error={recordsError} refresh={() => loadRecords()} />}
+        {tab === "ward-voice" && <WardVoice />}
         {tab === "users" && <UsersPage />}
         {tab === "network" && <NetworkPage />}
         {tab === "library" && <LibraryPage />}
