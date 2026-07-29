@@ -306,6 +306,13 @@ export type WardVoiceTask = {
   due_at: string; completed_at: string | null;
 };
 
+export type WardVoiceWard = {
+  id: string;
+  name: string;
+  code: string;
+  patient_count: number;
+};
+
 export type WardVoiceBed = {
   id: string; bed_number: string; patient_id: string | null; patient_name: string | null;
   patient_age: number | null; protocol: string | null; nurse_name: string | null;

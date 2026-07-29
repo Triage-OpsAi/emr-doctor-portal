@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { Icon } from "@/components/Icon";
-import type { FluidChart, WardCountersign, WardVoiceBed, WardVoiceCaptureResult, WardVoiceObservation, WardVoiceOverview, WardVoiceTask } from "@/lib/types";
+import type { FluidChart, WardCountersign, WardVoiceBed, WardVoiceCaptureResult, WardVoiceObservation, WardVoiceOverview, WardVoiceWard } from "@/lib/types";
 
 type WardTab = "rounds" | "capture" | "fluid" | "board" | "handover" | "countersigns" | "compliance";
 const tabs: { id: WardTab; label: string }[] = [
@@ -14,14 +14,7 @@ const tabs: { id: WardTab; label: string }[] = [
 ];
 const mono = "font-mono text-[10px] uppercase tracking-[.14em]";
 
-function dueLabel(task: WardVoiceTask) {
-  const due = new Date(task.due_at);
-  if (task.status === "completed") return `Done · ${task.completed_at ? new Date(task.completed_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}`;
-  if (task.status === "overdue") return `Overdue · ${due.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-  return `Due ${due.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-}
-
-function CapturePanel({ task, onConfirmed }: { task: WardVoiceTask | null; onConfirmed: () => void }) {
+function CapturePanel({ bed, onConfirmed }: { bed: WardVoiceBed | null; onConfirmed: () => void }) {
   const [recording, setRecording] = useState(false);
   const [audio, setAudio] = useState<Blob | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -39,7 +32,7 @@ function CapturePanel({ task, onConfirmed }: { task: WardVoiceTask | null; onCon
   }, []);
 
   async function start() {
-    if (!task) return;
+    if (!bed) return;
     setError(""); setAudio(null); setResult(null); setObservations([]);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -64,12 +57,12 @@ function CapturePanel({ task, onConfirmed }: { task: WardVoiceTask | null; onCon
   }
 
   async function process() {
-    if (!task || !audio) return;
+    if (!bed || !audio) return;
     setProcessing(true); setError("");
     try {
       const contentType = (audio.type || "audio/webm").split(";", 1)[0];
       const upload = await apiFetch<{ capture_id: string; upload_url: string; content_type: string }>("/ward-voice/captures", {
-        method: "POST", body: JSON.stringify({ bed_id: task.bed_id, task_id: task.id, content_type: contentType, file_size: audio.size, language_code: "unknown" }),
+        method: "POST", body: JSON.stringify({ bed_id: bed.id, task_id: null, content_type: contentType, file_size: audio.size, language_code: "unknown" }),
       });
       const sent = await fetch(upload.upload_url, { method: "PUT", headers: { "Content-Type": upload.content_type }, body: audio });
       if (!sent.ok) throw new Error("The recording could not be uploaded.");
@@ -93,7 +86,7 @@ function CapturePanel({ task, onConfirmed }: { task: WardVoiceTask | null; onCon
     finally { setProcessing(false); }
   }
 
-  const title = task ? `Capture · Bed ${task.bed_number}` : "Capture";
+  const title = bed ? `Capture · Bed ${bed.bed_number} · ${bed.patient_name}` : "Capture";
   return (
     <section className="overflow-hidden rounded-2xl border border-[#ddd2ff] bg-white text-[#171226] shadow-sm">
       <header className="flex h-12 items-center justify-between border-b border-[#e9e2ff] px-5">
@@ -101,7 +94,7 @@ function CapturePanel({ task, onConfirmed }: { task: WardVoiceTask | null; onCon
         <span className={`${mono} text-[#c8182b]`}>{recording ? `● REC ${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}` : processing ? "Processing…" : "Ready"}</span>
       </header>
       <div className="p-5">
-        {!task ? <p className="py-24 text-center text-sm text-[#777087]">Select a task card to begin bedside capture.</p> : (
+        {!bed ? <p className="py-24 text-center text-sm text-[#777087]">Select a patient to begin bedside capture.</p> : (
           <>
             <div className="py-5 text-center">
               <div className="relative mx-auto grid h-32 w-32 place-items-center">
@@ -256,57 +249,106 @@ function Countersigns({ onChanged }: { onChanged: () => void }) {
 
 export function WardVoice() {
   const [tab, setTab] = useState<WardTab>("rounds");
+  const [wards, setWards] = useState<WardVoiceWard[]>([]);
   const [data, setData] = useState<WardVoiceOverview | null>(null);
-  const [selectedTask, setSelectedTask] = useState<WardVoiceTask | null>(null);
+  const [selectedWardId, setSelectedWardId] = useState<string | null>(null);
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const load = useCallback(() => apiFetch<WardVoiceOverview>("/ward-voice/overview").then((value) => {
-    setData(value); setSelectedTask((current) => current ? value.tasks.find((item) => item.id === current.id) || null : value.tasks.find((item) => item.status !== "completed") || null);
-  }).catch((reason) => setError(reason.message)), []);
+  const loadWards = useCallback(() => {
+    apiFetch<WardVoiceWard[]>("/ward-voice/wards").then(setWards).catch((reason) => setError(reason.message));
+  }, []);
+  const load = useCallback(() => {
+    if (!selectedWardId) return;
+    apiFetch<WardVoiceOverview>(`/ward-voice/overview?ward_id=${encodeURIComponent(selectedWardId)}`)
+      .then((value) => {
+        setData(value);
+        setSelectedBedId((current) => value.beds.some((bed) => bed.id === current) ? current : null);
+      })
+      .catch((reason) => setError(reason.message));
+  }, [selectedWardId]);
+  useEffect(() => { void loadWards(); }, [loadWards]);
   useEffect(() => { void load(); }, [load]);
-  const selectedBed = data?.beds.find((bed) => bed.id === selectedBedId) || data?.beds.find((bed) => bed.patient_id) || null;
+  const selectedBed = data?.beds.find((bed) => bed.id === selectedBedId) || null;
+  const selectedWard = wards.find((ward) => ward.id === selectedWardId) || null;
+
+  function openWard(ward: WardVoiceWard) {
+    setSelectedWardId(ward.id);
+    setSelectedBedId(null);
+    setTab("capture");
+  }
+
+  function patientList(action: (bed: WardVoiceBed) => void) {
+    return (
+      <section className="overflow-hidden rounded-2xl border border-[#ddd2ff] bg-white">
+        <header className="border-b border-[#e9e2ff] px-5 py-4">
+          <h2 className="font-bold">{selectedWard?.name || data?.ward_name || "Select a ward"} patients</h2>
+          <p className="mt-1 text-xs text-[#777087]">Choose a patient by bed number</p>
+        </header>
+        <div className="space-y-2 p-3">
+          {data?.beds.filter((bed) => bed.patient_id).map((bed) => (
+            <button
+              type="button"
+              key={bed.id}
+              onClick={() => action(bed)}
+              className={`w-full rounded-xl border p-4 text-left transition ${
+                selectedBedId === bed.id
+                  ? "border-[#6d28d9] bg-[#eee9ff]"
+                  : "border-[#e5def8] hover:border-[#8b5cf6]"
+              }`}
+            >
+              <p className="text-lg font-black">Bed {bed.bed_number}</p>
+              <p className="mt-1 font-semibold">{bed.patient_name}</p>
+              <p className="mt-1 text-xs text-[#777087]">{bed.patient_age ?? "—"} years · {bed.protocol || "Ward observation"}</p>
+            </button>
+          ))}
+          {selectedWardId && !data?.beds.some((bed) => bed.patient_id) && (
+            <p className="py-12 text-center text-sm text-[#777087]">No patients have been assigned to this ward.</p>
+          )}
+          {!selectedWardId && <p className="py-12 text-center text-sm text-[#777087]">Open a ward from the Rounds tab first.</p>}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <main className="min-h-[calc(100vh-4rem)] bg-[#f8f6ff] p-4 text-[#171226] md:p-6">
       <div className="mx-auto max-w-[1500px]">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><p className={`${mono} text-[#6d28d9]`}>Ward Voice</p><h1 className="mt-1 text-2xl font-bold">{data?.ward_name || "Ward workspace"}</h1></div>
+          <div><p className={`${mono} text-[#6d28d9]`}>Ward Voice</p><h1 className="mt-1 text-2xl font-bold">{selectedWard?.name || "Ward workspace"}</h1></div>
           <p className="text-xs text-[#777087]">Voice-assisted nursing · human confirmed</p>
         </div>
         <nav className="mt-5 flex gap-1 overflow-x-auto border-b border-[#e4dcfa]" aria-label="Ward Voice">
           {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 border-b-2 px-4 py-3 text-sm font-semibold ${tab === item.id ? "border-[#6d28d9] bg-[#eee9ff] text-[#5520b5]" : "border-transparent text-[#625b73]"}`}>{item.label}{item.id === "board" && <span className="ml-2 text-red-600">●</span>}</button>)}
         </nav>
         {error && <p className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
-        {!data && !error && <p className="py-24 text-center text-sm text-[#777087]">Loading live ward data…</p>}
-        {data && (tab === "rounds" || tab === "capture") && (
-          <>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {[
-                ["Due next 60 min", data.kpis.due_next_hour, "across active beds"],
-                ["Overdue", data.kpis.overdue, "requires attention"],
-                ["Done this shift", data.kpis.done_this_shift, "confirmed entries"],
-                ["On time this shift", `${data.kpis.on_time_percentage}%`, "from task timestamps"],
-              ].map(([label, value, note], index) => <div key={label} className={`rounded-2xl border p-5 ${index === 3 ? "border-[#6d28d9] bg-[#6d28d9] text-white" : "border-[#ddd2ff] bg-white"}`}><p className={mono}>{label}</p><p className="mt-2 text-3xl font-black">{value}</p><p className="mt-1 text-xs opacity-75">{note}</p></div>)}
+        {tab === "rounds" && (
+          <section className="mt-5">
+            <div className="mb-5"><h2 className="text-xl font-black">Select a ward</h2><p className="mt-1 text-sm text-[#777087]">Only wards assigned to patients are shown.</p></div>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {wards.map((ward) => (
+                <button key={ward.id} onClick={() => openWard(ward)} className="aspect-square min-h-48 rounded-3xl border border-[#d7c9ff] bg-white p-6 text-center shadow-sm transition hover:-translate-y-1 hover:border-[#6d28d9] hover:shadow-xl">
+                  <p className={mono}>Ward</p>
+                  <p className="mt-8 text-4xl font-black text-[#6d28d9]">{ward.name}</p>
+                  <p className="mt-5 text-sm font-semibold">{ward.patient_count} patient{ward.patient_count === 1 ? "" : "s"}</p>
+                  <p className={`${mono} mt-2 text-[#777087]`}>{ward.code}</p>
+                </button>
+              ))}
             </div>
-            <div className="mt-5 grid gap-4 xl:grid-cols-[1.55fr_1fr]">
-              <section className="overflow-hidden rounded-2xl border border-[#ddd2ff] bg-white">
-                <header className="flex h-12 items-center justify-between border-b border-[#e9e2ff] px-5"><h2 className="font-bold">Task cards — assigned to you</h2><span className={`${mono} text-[#777087]`}>Live from the ward</span></header>
-                <div className="space-y-3 p-4">
-                  {data.tasks.map((task) => {
-                    const overdue = task.status === "overdue";
-                    return <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className={`w-full rounded-2xl border p-4 text-left ${task.status === "completed" ? "border-[#d9f2e7] bg-[#fbfffd] opacity-60" : overdue ? "border-amber-500 bg-amber-50" : selectedTask?.id === task.id ? "border-[#8b5cf6] bg-[#faf8ff]" : "border-[#ddd2ff]"}`}>
-                      <div className="flex items-start justify-between gap-3"><div><h3 className="text-lg font-bold">Bed {task.bed_number} · {task.patient_name}</h3><p className="mt-0.5 text-sm text-[#777087]">{task.patient_age ?? "—"} y · {task.protocol || "Routine care"} · {task.doctor_name || "Clinical team"}</p></div><span className={`${mono} ${overdue ? "text-amber-700" : task.status === "completed" ? "text-emerald-700" : "text-[#6d28d9]"}`}>{dueLabel(task)}</span></div>
-                      <p className="mt-2 font-bold">{task.title}</p>
-                    </button>;
-                  })}
-                  {!data.tasks.length && <p className="py-16 text-center text-sm text-[#777087]">No Ward Voice tasks are assigned in this ward.</p>}
-                </div>
-              </section>
-              <CapturePanel task={selectedTask} onConfirmed={load} />
-            </div>
-          </>
+            {!wards.length && !error && <p className="rounded-2xl border border-[#ddd2ff] bg-white py-20 text-center text-sm text-[#777087]">No patients have a ward and bed assignment yet. Open a patient and save both fields.</p>}
+          </section>
         )}
-        {data && tab === "fluid" && <FluidCharts bed={selectedBed} onChanged={load} />}
+        {tab === "capture" && (
+          <div className="mt-5 grid gap-4 xl:grid-cols-[380px_1fr]">
+            {patientList((bed) => setSelectedBedId(bed.id))}
+            <CapturePanel bed={selectedBed} onConfirmed={load} />
+          </div>
+        )}
+        {tab === "fluid" && (
+          <div className="mt-5 grid gap-4 xl:grid-cols-[380px_1fr]">
+            {patientList((bed) => setSelectedBedId(bed.id))}
+            <FluidCharts bed={selectedBed} onChanged={load} />
+          </div>
+        )}
         {data && tab === "board" && <WardBoard data={data} onOpen={(bed) => { setSelectedBedId(bed.id); setTab("fluid"); }} />}
         {data && tab === "handover" && <div className="mt-5"><HandoverPanel data={data} /></div>}
         {data && tab === "countersigns" && <Countersigns onChanged={load} />}
