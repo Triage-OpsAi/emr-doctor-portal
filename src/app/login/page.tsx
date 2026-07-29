@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Icon } from "@/components/Icon";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { apiFetch, clinicalLogin, hasSession } from "@/lib/api";
 import { AUDIT_EVENTS, queueAuditEvent } from "@/lib/audit";
@@ -49,61 +51,111 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen grid lg:grid-cols-[1.1fr_.9fr] bg-[var(--ink)]">
-      <section className="hidden lg:flex relative overflow-hidden border-r border-[var(--border)] p-12 flex-col justify-between bg-[var(--ink-elevated)]">
-        <div className="absolute inset-0 opacity-30" style={{ backgroundImage: "radial-gradient(circle at 20% 20%, rgba(43,175,158,.22), transparent 32%), radial-gradient(circle at 85% 72%, rgba(62,111,242,.18), transparent 28%)" }} />
-        <div className="relative flex items-center gap-3">
-          <span className="w-9 h-9 rounded-full bg-[var(--teal)] text-[#0d1113] grid place-items-center font-bold text-lg">+</span>
-          <span className="font-display text-lg font-semibold">Meridian Health AI</span>
-        </div>
-        <div className="relative max-w-xl">
-          <p className="font-mono text-xs uppercase tracking-[.22em] text-[var(--teal)] mb-5">Clinical intelligence workspace</p>
-          <h1 className="font-display text-5xl leading-[1.08] tracking-tight">
-            Every patient story,<br />ready for clinical action.
+    <main className="relative grid min-h-screen overflow-hidden bg-[var(--ink)] lg:grid-cols-[1.04fr_.96fr]">
+      <div className="pointer-events-none absolute -right-36 -top-40 h-[34rem] w-[34rem] rounded-full bg-[var(--teal)]/10 blur-[120px] lg:hidden" />
+
+      <section className="relative hidden min-h-screen overflow-hidden border-r bg-[var(--ink-elevated)] p-10 lg:flex lg:flex-col xl:p-14">
+        <div className="pointer-events-none absolute inset-0 opacity-60" style={{ backgroundImage: "radial-gradient(circle at 18% 12%, rgba(43,175,158,.2), transparent 31%), radial-gradient(circle at 92% 80%, rgba(62,111,242,.14), transparent 28%), linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)", backgroundSize: "auto, auto, 44px 44px, 44px 44px" }} />
+        <Link href="/" className="focus-ring relative flex w-fit items-center gap-3 rounded-lg" aria-label="Back to Meridian Health AI home">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--teal)] text-xl font-bold text-[#07110f] shadow-[0_10px_30px_rgba(43,175,158,.24)]">+</span>
+          <span><span className="block font-display text-base font-semibold leading-none">Meridian Health AI</span><span className="mt-1.5 block font-mono text-[8px] uppercase tracking-[.2em] text-[var(--faint)]">Doctor portal</span></span>
+        </Link>
+
+        <div className="relative my-auto max-w-xl py-16">
+          <p className="font-mono text-[10px] uppercase tracking-[.22em] text-[var(--teal)]">Clinical work, connected</p>
+          <h1 className="mt-6 font-display text-5xl leading-[1.03] tracking-[-.035em] xl:text-6xl">
+            The full patient picture, ready when you are.
           </h1>
-          <p className="mt-6 max-w-md text-[var(--muted)] leading-7">
-            Capture, structure, review and manage medical records across your hospital network.
+          <p className="mt-6 max-w-lg text-base leading-7 text-[var(--muted)]">
+            Move from voice intake to structured records, patient review and coordinated follow-up in one focused clinical workspace.
           </p>
+          <div className="mt-10 grid max-w-lg gap-3 sm:grid-cols-3">
+            {[
+              ["mic", "Voice intake"],
+              ["file", "Patient records"],
+              ["shield", "Audited access"],
+            ].map(([icon, label]) => (
+              <div key={label} className="rounded-2xl border bg-[var(--ink)]/60 p-4 backdrop-blur-sm">
+                <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name={icon as "mic" | "file" | "shield"} size={15} /></span>
+                <p className="mt-4 text-[11px] font-medium">{label}</p>
+              </div>
+            ))}
+          </div>
         </div>
-        <p className="relative text-xs text-[var(--faint)] font-mono">Secure tenant access · Audited clinical records</p>
+
+        <div className="relative flex items-center justify-between gap-6 border-t pt-6">
+          <p className="font-mono text-[9px] uppercase tracking-[.14em] text-[var(--faint)]">Secure tenant access · Clinical audit trail</p>
+          <span className="flex items-center gap-2 text-[10px] text-[var(--muted)]"><span className="h-1.5 w-1.5 rounded-full bg-[var(--teal)]" />System ready</span>
+        </div>
       </section>
 
-      <section className="min-h-screen flex flex-col">
-        <header className="h-16 px-6 md:px-10 flex items-center justify-between border-b border-[var(--border)]">
-          <div className="lg:hidden flex items-center gap-2">
-            <span className="w-7 h-7 rounded-full bg-[var(--teal)] text-[#0d1113] grid place-items-center font-bold">+</span>
-            <span className="font-display font-semibold">Meridian</span>
+      <section className="relative flex min-h-screen flex-col">
+        <header className="flex h-[72px] items-center justify-between border-b px-5 sm:px-8 lg:justify-end lg:px-10">
+          <Link href="/" className="focus-ring flex items-center gap-2 rounded-lg lg:hidden" aria-label="Meridian Health AI home">
+            <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal)] font-bold text-[#07110f]">+</span>
+            <span className="font-display text-sm font-semibold">Meridian</span>
+          </Link>
+          <div className="flex items-center gap-5">
+            <Link href="/" className="focus-ring hidden rounded text-[11px] font-medium text-[var(--muted)] transition hover:text-[var(--text)] sm:block">Back to overview</Link>
+            <ThemeToggle />
           </div>
-          <span className="hidden lg:block text-xs font-mono text-[var(--faint)]">DOCTOR PORTAL</span>
-          <ThemeToggle />
         </header>
-        <div className="flex-1 grid place-items-center px-6 py-12">
-          <div className="w-full max-w-md">
-            <p className="font-mono text-xs text-[var(--teal)] uppercase tracking-[.16em]">Welcome back</p>
-            <h2 className="font-display text-3xl mt-3">Sign in to your workspace</h2>
-            <p className="text-sm text-[var(--muted)] mt-2">Use the hospital code included in your invitation.</p>
-            {error && <p role="alert" className="mt-6 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
-            <form onSubmit={submit} className="mt-8 space-y-5">
+
+        <div className="relative grid flex-1 place-items-center px-5 py-10 sm:px-8 sm:py-14">
+          <div className="w-full max-w-[470px] rounded-[28px] border bg-[var(--ink-elevated)] p-6 shadow-[0_28px_90px_var(--shadow)] sm:p-9">
+            <div className="flex items-start justify-between gap-5">
+              <div>
+                <p className="font-mono text-[10px] uppercase tracking-[.2em] text-[var(--teal)]">Welcome back</p>
+                <h2 className="mt-3 font-display text-3xl tracking-tight sm:text-[2.1rem]">Sign in to Meridian</h2>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">Enter the credentials provided by your hospital.</p>
+              </div>
+              <span className="hidden h-10 w-10 place-items-center rounded-xl border text-[var(--teal)] sm:grid"><Icon name="shield" size={18} /></span>
+            </div>
+
+            {error && (
+              <div role="alert" className="mt-6 flex gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 text-sm text-[var(--danger)]">
+                <Icon name="help-circle" size={17} className="mt-0.5 shrink-0" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <form onSubmit={submit} className="mt-7 space-y-4">
               <label className="block">
-                <span className="block text-xs font-medium text-[var(--muted)] mb-2">Work email</span>
-                <input name="email" type="email" required autoComplete="email" placeholder="doctor@hospital.com" className="focus-ring w-full h-11 rounded-lg border bg-[var(--ink-elevated)] px-3 text-sm placeholder:text-[var(--faint)]" />
+                <span className="mb-2 block text-[11px] font-semibold text-[var(--muted)]">Work email</span>
+                <span className="relative block">
+                  <Icon name="mail" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
+                  <input name="email" type="email" required autoComplete="email" placeholder="doctor@hospital.com" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                </span>
               </label>
               <label className="block">
-                <span className="block text-xs font-medium text-[var(--muted)] mb-2">Password</span>
-                <input name="password" type="password" required autoComplete="current-password" placeholder="Enter your password" className="focus-ring w-full h-11 rounded-lg border bg-[var(--ink-elevated)] px-3 text-sm placeholder:text-[var(--faint)]" />
+                <span className="mb-2 block text-[11px] font-semibold text-[var(--muted)]">Password</span>
+                <span className="relative block">
+                  <Icon name="shield" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
+                  <input name="password" type="password" required autoComplete="current-password" placeholder="Enter your password" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                </span>
               </label>
               <label className="block">
-                <span className="block text-xs font-medium text-[var(--muted)] mb-2">Hospital code</span>
-                <input name="hospital_code" required autoCapitalize="characters" value={hospitalCode} onChange={(event) => setHospitalCode(event.target.value)} placeholder="RAINBO-BLR" className="focus-ring w-full h-11 rounded-lg border bg-[var(--ink-elevated)] px-3 font-mono text-sm uppercase placeholder:text-[var(--faint)]" />
+                <span className="mb-2 flex items-center justify-between gap-3 text-[11px] font-semibold text-[var(--muted)]">
+                  <span>Hospital code</span>
+                  <span className="font-mono text-[8px] font-normal uppercase tracking-[.12em] text-[var(--faint)]">From your invitation</span>
+                </span>
+                <span className="relative block">
+                  <Icon name="building" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
+                  <input name="hospital_code" required autoCapitalize="characters" spellCheck={false} value={hospitalCode} onChange={(event) => setHospitalCode(event.target.value)} placeholder="RAINBO-BLR" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 font-mono text-sm uppercase tracking-[.08em] transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                </span>
               </label>
-              <button disabled={submitting} className="focus-ring w-full h-11 rounded-lg bg-[var(--teal)] text-[#08110f] font-semibold text-sm transition hover:brightness-110 disabled:opacity-60">
-                {submitting ? "Opening workspace…" : "Continue securely"}
+              <button disabled={submitting} className="focus-ring mt-2 inline-flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--teal)] text-sm font-semibold text-[#07110f] shadow-[0_12px_30px_rgba(43,175,158,.18)] transition hover:-translate-y-0.5 hover:brightness-105 disabled:cursor-wait disabled:translate-y-0 disabled:opacity-60">
+                {submitting ? <><Icon name="refresh" size={16} className="animate-spin" /> Opening workspace...</> : <>Continue securely <Icon name="chevron" size={15} /></>}
               </button>
             </form>
-            <p className="text-xs text-[var(--faint)] mt-6">
-              Joining for the first time? Open the secure setup link sent to your email.
-            </p>
+
+            <div className="mt-7 border-t pt-5">
+              <p className="text-center text-[11px] leading-5 text-[var(--faint)]">
+                First time here? Use the secure account setup link sent to your work email.
+              </p>
+            </div>
           </div>
+          <p className="mt-6 flex items-center gap-2 text-[10px] text-[var(--faint)]"><Icon name="shield" size={12} />Your session is scoped to your hospital workspace.</p>
         </div>
       </section>
     </main>
