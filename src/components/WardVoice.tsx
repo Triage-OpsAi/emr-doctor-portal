@@ -250,6 +250,7 @@ function Countersigns({ onChanged }: { onChanged: () => void }) {
 export function WardVoice() {
   const [tab, setTab] = useState<WardTab>("rounds");
   const [wards, setWards] = useState<WardVoiceWard[]>([]);
+  const [patients, setPatients] = useState<WardVoiceBed[]>([]);
   const [data, setData] = useState<WardVoiceOverview | null>(null);
   const [selectedWardId, setSelectedWardId] = useState<string | null>(null);
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
@@ -257,23 +258,34 @@ export function WardVoice() {
   const loadWards = useCallback(() => {
     apiFetch<WardVoiceWard[]>("/ward-voice/wards").then(setWards).catch((reason) => setError(reason.message));
   }, []);
-  const load = useCallback(() => {
+  const loadOverview = useCallback(() => {
     if (!selectedWardId) return;
     apiFetch<WardVoiceOverview>(`/ward-voice/overview?ward_id=${encodeURIComponent(selectedWardId)}`)
+      .then(setData)
+      .catch((reason) => setError(reason.message));
+  }, [selectedWardId]);
+  const loadPatients = useCallback(() => {
+    if (!selectedWardId) return;
+    apiFetch<WardVoiceBed[]>(`/ward-voice/wards/${encodeURIComponent(selectedWardId)}/patients`)
       .then((value) => {
-        setData(value);
-        setSelectedBedId((current) => value.beds.some((bed) => bed.id === current) ? current : null);
+        setPatients(value);
+        setSelectedBedId((current) => value.some((bed) => bed.id === current) ? current : null);
       })
       .catch((reason) => setError(reason.message));
   }, [selectedWardId]);
   useEffect(() => { void loadWards(); }, [loadWards]);
-  useEffect(() => { void load(); }, [load]);
-  const selectedBed = data?.beds.find((bed) => bed.id === selectedBedId) || null;
+  useEffect(() => { void loadPatients(); }, [loadPatients]);
+  useEffect(() => {
+    if (["board", "handover", "compliance"].includes(tab)) void loadOverview();
+  }, [loadOverview, tab]);
+  const selectedBed = patients.find((bed) => bed.id === selectedBedId) || null;
   const selectedWard = wards.find((ward) => ward.id === selectedWardId) || null;
 
   function openWard(ward: WardVoiceWard) {
     setSelectedWardId(ward.id);
     setSelectedBedId(null);
+    setPatients([]);
+    setData(null);
     setTab("capture");
   }
 
@@ -285,7 +297,7 @@ export function WardVoice() {
           <p className="mt-1 text-xs text-[#777087]">Choose a patient by bed number</p>
         </header>
         <div className="space-y-2 p-3">
-          {data?.beds.filter((bed) => bed.patient_id).map((bed) => (
+          {patients.filter((bed) => bed.patient_id).map((bed) => (
             <button
               type="button"
               key={bed.id}
@@ -301,7 +313,7 @@ export function WardVoice() {
               <p className="mt-1 text-xs text-[#777087]">{bed.patient_age ?? "—"} years · {bed.protocol || "Ward observation"}</p>
             </button>
           ))}
-          {selectedWardId && !data?.beds.some((bed) => bed.patient_id) && (
+          {selectedWardId && !patients.some((bed) => bed.patient_id) && (
             <p className="py-12 text-center text-sm text-[#777087]">No patients have been assigned to this ward.</p>
           )}
           {!selectedWardId && <p className="py-12 text-center text-sm text-[#777087]">Open a ward from the Rounds tab first.</p>}
@@ -340,18 +352,18 @@ export function WardVoice() {
         {tab === "capture" && (
           <div className="mt-5 grid gap-4 xl:grid-cols-[380px_1fr]">
             {patientList((bed) => setSelectedBedId(bed.id))}
-            <CapturePanel bed={selectedBed} onConfirmed={load} />
+            <CapturePanel bed={selectedBed} onConfirmed={loadPatients} />
           </div>
         )}
         {tab === "fluid" && (
           <div className="mt-5 grid gap-4 xl:grid-cols-[380px_1fr]">
             {patientList((bed) => setSelectedBedId(bed.id))}
-            <FluidCharts bed={selectedBed} onChanged={load} />
+            <FluidCharts bed={selectedBed} onChanged={loadPatients} />
           </div>
         )}
         {data && tab === "board" && <WardBoard data={data} onOpen={(bed) => { setSelectedBedId(bed.id); setTab("fluid"); }} />}
         {data && tab === "handover" && <div className="mt-5"><HandoverPanel data={data} /></div>}
-        {data && tab === "countersigns" && <Countersigns onChanged={load} />}
+        {tab === "countersigns" && <Countersigns onChanged={loadPatients} />}
         {data && tab === "compliance" && <CompliancePanel data={data} />}
       </div>
     </main>
