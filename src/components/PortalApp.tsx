@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { Icon, IconName } from "@/components/Icon";
 import { WardVoice } from "@/components/WardVoice";
+import { TriCareLogo } from "@/components/TriCareLogo";
 import { apiFetch, clearTokens, hasSession } from "@/lib/api";
 import {
   AUDIT_EVENT_LABELS,
@@ -1338,7 +1339,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
   }
 
   if (!workspace) {
-    return <div className="grid min-h-screen place-items-center bg-[var(--ink)]"><div className="text-center"><span className="mx-auto grid h-10 w-10 place-items-center rounded-full bg-[var(--teal)] font-bold text-[#07110f]">+</span><p className="font-mono mt-4 text-xs text-[var(--muted)]">{loadingError || "Opening clinical workspace…"}</p></div></div>;
+    return <div className="grid min-h-screen place-items-center bg-[var(--ink)]"><div className="text-center"><TriCareLogo size={40} className="mx-auto shadow-lg" /><p className="font-mono mt-4 text-xs text-[var(--muted)]">{loadingError || "Opening clinical workspace…"}</p></div></div>;
   }
 
   return (
@@ -1346,8 +1347,8 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
       {mobileOpen && <button className="fixed inset-0 z-30 bg-black/55 lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />}
       <aside className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r bg-[var(--ink-elevated)] transition-all duration-200 ${collapsed ? "w-[72px]" : "w-64"} ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
         <div className={`flex h-16 items-center border-b px-4 ${collapsed ? "justify-center" : "gap-3"}`}>
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-[var(--teal)] font-bold text-[#07110f]">+</span>
-          {!collapsed && <div className="min-w-0"><p className="truncate font-display text-sm font-semibold">Meridian Health AI</p><p className="truncate font-mono text-[9px] uppercase tracking-[.12em] text-[var(--faint)]">Doctor portal</p></div>}
+          <TriCareLogo size={32} className="shadow-sm" />
+          {!collapsed && <div className="min-w-0"><p className="truncate font-display text-sm font-semibold">Tri-Care</p><p className="truncate font-mono text-[9px] uppercase tracking-[.12em] text-[var(--faint)]">Doctor portal</p></div>}
         </div>
         <div className={`border-b p-4 ${collapsed ? "px-3" : ""}`}>
           <div className={`rounded-lg bg-[var(--ink)] p-3 ${collapsed ? "grid place-items-center p-2" : ""}`}>

@@ -4,6 +4,7 @@ import { FormEvent, Suspense, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
+import { TriCareLogo } from "@/components/TriCareLogo";
 import { API_URL } from "@/lib/api";
 
 function InvitationForm() {
@@ -72,7 +73,7 @@ export default function AcceptInvitationPage() {
   return (
     <main className="min-h-screen bg-[var(--ink)]">
       <header className="flex h-16 items-center justify-between border-b px-6 md:px-10">
-        <Link href="/login" className="flex items-center gap-2"><span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--teal)] font-bold text-[#07110f]">+</span><span className="font-display font-semibold">Meridian Health AI</span></Link>
+        <Link href="/login" className="flex items-center gap-2"><TriCareLogo size={32} /><span className="font-display font-semibold">Tri-Care</span></Link>
         <ThemeToggle />
       </header>
       <div className="grid min-h-[calc(100vh-4rem)] place-items-center p-6">

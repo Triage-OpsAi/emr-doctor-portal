@@ -15,7 +15,7 @@ const geistMono = localFont({
 });
 
 export const metadata: Metadata = {
-  title: "Meridian Health AI | Doctor Portal",
+  title: "Tri-Care | Doctor Portal",
   description: "Secure clinical workspace for hospital teams.",
 };
 

@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { useRouter } from "next/navigation";
 import { AddMedicationModal, AddRecordModal, Modal, ReportUploadModal, VoiceEncounterModal } from "@/components/PortalApp";
 import { Icon, type IconName } from "@/components/Icon";
+import { TriCareLogo } from "@/components/TriCareLogo";
 import { apiFetch, clearTokens, hasSession } from "@/lib/api";
 import { AUDIT_EVENTS, flushAuditQueue, queueAuditEvent } from "@/lib/audit";
 import type {
@@ -1234,9 +1235,9 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
       <header className="sticky top-0 z-30 flex h-[72px] items-center justify-between gap-4 border-b border-[#e3e9e8] bg-white px-5 md:px-7">
         <div className="flex min-w-0 items-center gap-5">
           <button onClick={() => router.push(workspacePath)} className="focus-ring flex items-center gap-3 rounded-md text-left">
-            <span className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-[#0d7778] to-[#36c99e] text-xl font-bold text-white">+</span>
+            <TriCareLogo size={40} className="shadow-sm" />
             <span className="hidden sm:block">
-              <span className="block text-sm font-bold leading-tight">Meridian Health AI</span>
+              <span className="block text-sm font-bold leading-tight">Tri-Care</span>
               <span className="mt-0.5 block text-[8px] uppercase tracking-[.18em] text-[#829096]">Doctor portal</span>
             </span>
           </button>

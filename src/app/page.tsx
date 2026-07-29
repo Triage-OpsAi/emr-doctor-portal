@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Icon, type IconName } from "@/components/Icon";
 import { ThemeToggle } from "@/components/ThemeProvider";
+import { TriCareLogo } from "@/components/TriCareLogo";
 
 const navigation = [
   ["Product", "#product"],
@@ -45,11 +46,9 @@ const workflow = [
 function Brand() {
   return (
     <span className="flex items-center gap-3">
-      <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--teal)] text-lg font-bold text-[#07110f] shadow-[0_8px_24px_rgba(43,175,158,.22)]">
-        +
-      </span>
+      <TriCareLogo size={36} className="shadow-[0_8px_24px_rgba(43,175,158,.22)]" />
       <span>
-        <span className="block font-display text-[15px] font-semibold leading-none">Meridian Health AI</span>
+        <span className="block font-display text-[15px] font-semibold leading-none">Tri-Care</span>
         <span className="mt-1 block font-mono text-[8px] uppercase tracking-[.18em] text-[var(--faint)]">Clinical workspace</span>
       </span>
     </span>
@@ -63,7 +62,7 @@ function DashboardPreview() {
       <div className="relative overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--ink-elevated)] shadow-[0_30px_90px_var(--shadow)]">
         <div className="flex h-12 items-center justify-between border-b px-4">
           <div className="flex items-center gap-2">
-            <span className="grid h-6 w-6 place-items-center rounded-lg bg-[var(--teal)] text-[11px] font-bold text-[#07110f]">+</span>
+            <TriCareLogo size={24} className="rounded-lg" />
             <span className="text-[10px] font-semibold">Clinical workspace</span>
           </div>
           <div className="flex gap-1.5" aria-hidden="true">
@@ -135,7 +134,7 @@ export default function Home() {
     <main className="min-h-screen overflow-hidden bg-[var(--ink)] text-[var(--text)]">
       <header className="fixed inset-x-0 top-0 z-50 border-b border-[var(--border)]/80 bg-[var(--ink)]/90 backdrop-blur-xl">
         <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
-          <Link href="/" aria-label="Meridian Health AI home"><Brand /></Link>
+          <Link href="/" aria-label="Tri-Care home"><Brand /></Link>
           <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary navigation">
             {navigation.map(([label, href]) => <a key={href} href={href} className="focus-ring rounded text-xs font-medium text-[var(--muted)] transition hover:text-[var(--text)]">{label}</a>)}
             <Link href="/login" className="focus-ring rounded text-xs font-semibold text-[var(--text)]">Login</Link>
@@ -174,7 +173,7 @@ export default function Home() {
             Patient context,<br /><span className="text-[var(--teal)]">ready for care.</span>
           </h1>
           <p className="mt-7 max-w-xl text-base leading-7 text-[var(--muted)] sm:text-lg sm:leading-8">
-            Meridian brings voice intake, structured clinical records, reports and care coordination into one secure workspace for hospital teams.
+            Tri-Care brings voice intake, structured clinical records, reports and care coordination into one secure workspace for hospital teams.
           </p>
           <div className="mt-9 flex flex-col gap-3 sm:flex-row">
             <Link href="/login" className="focus-ring inline-flex h-13 items-center justify-center gap-2 rounded-xl bg-[var(--teal)] px-6 py-4 text-sm font-semibold text-[#07110f] transition hover:-translate-y-0.5 hover:brightness-105">
@@ -246,7 +245,7 @@ export default function Home() {
               <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name="shield" size={23} /></span>
               <p className="mt-9 font-mono text-[10px] uppercase tracking-[.2em] text-[var(--teal)]">Security and accountability</p>
               <h2 className="mt-5 max-w-xl font-display text-4xl leading-tight tracking-tight sm:text-5xl">Clinical access with clear boundaries.</h2>
-              <p className="mt-5 max-w-lg text-sm leading-7 text-[var(--muted)]">Meridian uses authenticated, tenant-scoped workspaces with role permissions, private file access and recorded audit activity.</p>
+              <p className="mt-5 max-w-lg text-sm leading-7 text-[var(--muted)]">Tri-Care uses authenticated, tenant-scoped workspaces with role permissions, private file access and recorded audit activity.</p>
             </div>
             <div className="grid border-t lg:border-l lg:border-t-0">
               {[
@@ -270,7 +269,7 @@ export default function Home() {
           <div className="relative max-w-2xl">
             <p className="font-mono text-[10px] uppercase tracking-[.2em] opacity-70">Your clinical workspace</p>
             <h2 className="mt-4 font-display text-4xl leading-tight tracking-tight sm:text-5xl">Ready when the care team is.</h2>
-            <p className="mt-4 text-sm leading-6 opacity-75">Use your work email, password and hospital code to access Meridian securely.</p>
+            <p className="mt-4 text-sm leading-6 opacity-75">Use your work email, password and hospital code to access Tri-Care securely.</p>
           </div>
           <Link href="/login" className="focus-ring relative mt-8 inline-flex h-12 items-center gap-2 rounded-xl bg-[#07110f] px-6 text-sm font-semibold text-white transition hover:-translate-y-0.5 lg:mt-0">
             Continue to login <Icon name="chevron" size={15} />
@@ -285,7 +284,7 @@ export default function Home() {
             {navigation.map(([label, href]) => <a key={href} href={href} className="focus-ring rounded hover:text-[var(--text)]">{label}</a>)}
             <Link href="/login" className="focus-ring rounded font-semibold text-[var(--text)]">Login</Link>
           </div>
-          <p className="font-mono text-[9px] text-[var(--faint)]">© 2026 Meridian Health AI</p>
+          <p className="font-mono text-[9px] text-[var(--faint)]">© 2026 Tri-Care</p>
         </div>
       </footer>
     </main>

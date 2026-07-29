@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { ThemeToggle } from "@/components/ThemeProvider";
+import { TriCareLogo } from "@/components/TriCareLogo";
 import { apiFetch, clinicalLogin, fetchClinicalHospitalCode, hasSession } from "@/lib/api";
 import { AUDIT_EVENTS, queueAuditEvent } from "@/lib/audit";
 import type { Workspace } from "@/lib/types";
@@ -83,9 +84,9 @@ export default function LoginPage() {
 
       <section className="relative hidden min-h-screen overflow-hidden border-r bg-[var(--ink-elevated)] p-10 lg:flex lg:flex-col xl:p-14">
         <div className="pointer-events-none absolute inset-0 opacity-60" style={{ backgroundImage: "radial-gradient(circle at 18% 12%, rgba(43,175,158,.2), transparent 31%), radial-gradient(circle at 92% 80%, rgba(62,111,242,.14), transparent 28%), linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px)", backgroundSize: "auto, auto, 44px 44px, 44px 44px" }} />
-        <Link href="/" className="focus-ring relative flex w-fit items-center gap-3 rounded-lg" aria-label="Back to Meridian Health AI home">
-          <span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--teal)] text-xl font-bold text-[#07110f] shadow-[0_10px_30px_rgba(43,175,158,.24)]">+</span>
-          <span><span className="block font-display text-base font-semibold leading-none">Meridian Health AI</span><span className="mt-1.5 block font-mono text-[8px] uppercase tracking-[.2em] text-[var(--faint)]">Doctor portal</span></span>
+        <Link href="/" className="focus-ring relative flex w-fit items-center gap-3 rounded-lg" aria-label="Back to Tri-Care home">
+          <TriCareLogo size={40} className="shadow-[0_10px_30px_rgba(109,40,217,.24)]" />
+          <span><span className="block font-display text-base font-semibold leading-none">Tri-Care</span><span className="mt-1.5 block font-mono text-[8px] uppercase tracking-[.2em] text-[var(--faint)]">Doctor portal</span></span>
         </Link>
 
         <div className="relative my-auto max-w-xl py-16">
@@ -118,9 +119,9 @@ export default function LoginPage() {
 
       <section className="relative flex min-h-screen flex-col">
         <header className="flex h-[72px] items-center justify-between border-b px-5 sm:px-8 lg:justify-end lg:px-10">
-          <Link href="/" className="focus-ring flex items-center gap-2 rounded-lg lg:hidden" aria-label="Meridian Health AI home">
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal)] font-bold text-[#07110f]">+</span>
-            <span className="font-display text-sm font-semibold">Meridian</span>
+          <Link href="/" className="focus-ring flex items-center gap-2 rounded-lg lg:hidden" aria-label="Tri-Care home">
+            <TriCareLogo size={32} />
+            <span className="font-display text-sm font-semibold">Tri-Care</span>
           </Link>
           <div className="flex items-center gap-5">
             <Link href="/" className="focus-ring hidden rounded text-[11px] font-medium text-[var(--muted)] transition hover:text-[var(--text)] sm:block">Back to overview</Link>
@@ -133,7 +134,7 @@ export default function LoginPage() {
             <div className="flex items-start justify-between gap-5">
               <div>
                 <p className="font-mono text-[10px] uppercase tracking-[.2em] text-[var(--teal)]">Welcome back</p>
-                <h2 className="mt-3 font-display text-3xl tracking-tight sm:text-[2.1rem]">Sign in to Meridian</h2>
+                <h2 className="mt-3 font-display text-3xl tracking-tight sm:text-[2.1rem]">Sign in to Tri-Care</h2>
                 <p className="mt-2 text-sm leading-6 text-[var(--muted)]">Enter the credentials provided by your hospital.</p>
               </div>
               <span className="hidden h-10 w-10 place-items-center rounded-xl border text-[var(--teal)] sm:grid"><Icon name="shield" size={18} /></span>
