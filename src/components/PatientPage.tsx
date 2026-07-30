@@ -1424,7 +1424,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                   </div>
                 </div>
 
-                <nav className="mt-5 flex gap-1 overflow-x-auto rounded-xl border border-[#dfe7e6] bg-white p-1 text-xs text-[#65747a]">
+                <nav className="mt-5 flex gap-1 overflow-x-auto rounded-xl border border-[#dfe7e6] bg-white p-1 text-xs text-[#65747a] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {TOP_TABS.map((tab) => (
                     <button
                       key={tab.id}
