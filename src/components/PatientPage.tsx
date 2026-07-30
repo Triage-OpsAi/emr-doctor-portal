@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AddMedicationModal, AddRecordModal, Modal, ReportUploadModal, VoiceEncounterModal } from "@/components/PortalApp";
 import { Icon, type IconName } from "@/components/Icon";
@@ -145,9 +145,9 @@ function SmallDeleteButton({ onClick }: { onClick: () => void }) {
 
 function ClinicalSection({ id, title, action, children }: { id?: string; title: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <section id={id} className="scroll-mt-24 border-t border-[#eef2f1] px-5 py-6 first:border-t-0 sm:px-7">
-      <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-bold text-[#18232f]">{title}</h2>
+    <section id={id} className="scroll-mt-24 my-5 rounded-xl border border-[#dfe7e6] bg-white p-5 shadow-[0_4px_16px_rgba(35,58,55,.04)]">
+      <div className="mb-5 flex items-center justify-between border-b border-[#e8eeed] pb-4">
+        <h2 className="text-base font-bold text-[#18232f]">{title}</h2>
         {action}
       </div>
       {children}
@@ -773,31 +773,31 @@ function MedicationDonut({ names }: { names: string[] }) {
 /*  Main page                                                              */
 /* ---------------------------------------------------------------------- */
 
-const SIDEBAR_LINKS: Array<{ label: string; icon: string; href: string; badge?: (n: { orders: number; reports: number }) => number | undefined }> = [
-  { label: "Overview", icon: "home", href: "#visit" },
-  { label: "Encounters", icon: "activity", href: "#consults" },
-  { label: "Clinical Notes", icon: "file", href: "#emr-summary" },
-  { label: "Orders", icon: "library", href: "#orders", badge: (n) => n.orders },
-  { label: "Medications", icon: "pill", href: "#orders" },
-  { label: "Diagnostics", icon: "activity", href: "#reports" },
-  { label: "Reports", icon: "file", href: "#reports", badge: (n) => n.reports },
-  { label: "Discharge Summary", icon: "mic", href: "#discharge" },
-  { label: "Prepare Handover", icon: "users", href: "#handover" },
-  { label: "EMR Records", icon: "file", href: "#emr-summary" },
-];
-
 const TOP_TABS = [
-  { id: "summary", label: "Summary" },
-  { id: "timeline", label: "Timeline" },
-  { id: "clinical", label: "Clinical Details" },
-  { id: "medications", label: "Medications" },
-  { id: "diagnoses", label: "Diagnoses" },
-  { id: "reports", label: "Reports" },
-  { id: "documents", label: "Documents" },
-  { id: "handover", label: "Handover" },
+  { id: "summary", label: "Overview", icon: "home" },
+  { id: "timeline", label: "Timeline", icon: "activity" },
+  { id: "clinical", label: "Clinical", icon: "file" },
+  { id: "medications", label: "Medications", icon: "pill" },
+  { id: "diagnoses", label: "Diagnoses", icon: "shield" },
+  { id: "reports", label: "Reports", icon: "library" },
+  { id: "documents", label: "Documents", icon: "file" },
+  { id: "handover", label: "Handover", icon: "users" },
 ] as const;
 
 type PatientTab = (typeof TOP_TABS)[number]["id"];
+
+const SIDEBAR_LINKS: Array<{ label: string; icon: IconName; tab: PatientTab; group: "Clinical" | "Records"; badge?: (n: { orders: number; reports: number }) => number | undefined }> = [
+  { label: "Overview", icon: "home", tab: "summary", group: "Clinical" },
+  { label: "Encounters", icon: "activity", tab: "timeline", group: "Clinical" },
+  { label: "Clinical Notes", icon: "file", tab: "clinical", group: "Clinical" },
+  { label: "Orders", icon: "library", tab: "medications", group: "Clinical", badge: (n) => n.orders },
+  { label: "Medications", icon: "pill", tab: "medications", group: "Clinical" },
+  { label: "Diagnostics", icon: "activity", tab: "reports", group: "Clinical" },
+  { label: "Reports", icon: "file", tab: "reports", group: "Records", badge: (n) => n.reports },
+  { label: "Discharge Summary", icon: "mic", tab: "documents", group: "Records" },
+  { label: "Prepare Handover", icon: "users", tab: "handover", group: "Records" },
+  { label: "EMR Records", icon: "file", tab: "clinical", group: "Records" },
+];
 
 function EditPatientModal({
   patient,
@@ -1226,6 +1226,16 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
   }
 
   const isApproved = Boolean(latest && latest.status !== "pending_review");
+  const sidebarActiveLabel: Record<PatientTab, string> = {
+    summary: "Overview",
+    timeline: "Encounters",
+    clinical: "Clinical Notes",
+    medications: "Medications",
+    diagnoses: "Clinical Notes",
+    reports: "Reports",
+    documents: "Discharge Summary",
+    handover: "Prepare Handover",
+  };
 
   return (
     <div className="min-h-screen bg-[#f7f9f9] text-[#18232f]">
@@ -1294,22 +1304,31 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
         <aside className="sticky top-[72px] hidden h-[calc(100vh-72px)] flex-col justify-between overflow-y-auto border-r border-[#e3e9e8] bg-white p-4 md:flex">
           <nav className="space-y-1 text-xs">
             {SIDEBAR_LINKS.map((link, index) => (
-              <a
-                key={link.label}
-                href={link.href}
-                className={
-                  index === 0
-                    ? "flex items-center justify-between gap-3 rounded-lg bg-[#075e61] px-3 py-3 font-semibold text-white"
-                    : "flex items-center justify-between gap-3 rounded-lg px-3 py-3 text-[#51616b] hover:bg-[#eef5f3]"
-                }
-              >
-                <span className="flex items-center gap-3">
-                  <Icon name={link.icon as IconName} size={16} /> {link.label}
-                </span>
-                {link.badge && link.badge({ orders: orders.length, reports: chart.reports.length }) ? (
-                  <span className={index === 0 ? "text-[10px] text-white/80" : "text-[10px] text-[#9aa7ac]"}>{link.badge({ orders: orders.length, reports: chart.reports.length })}</span>
-                ) : null}
-              </a>
+              <Fragment key={link.label}>
+                {(index === 0 || SIDEBAR_LINKS[index - 1].group !== link.group) && (
+                  <p className={`${index === 0 ? "pb-2" : "pb-2 pt-5"} px-3 text-[9px] font-bold uppercase tracking-[.18em] text-[#718099]`}>{link.group}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(link.tab);
+                    setEditingTab(null);
+                    setEditDrafts({});
+                  }}
+                  className={
+                    sidebarActiveLabel[activeTab] === link.label
+                      ? "flex w-full items-center justify-between gap-3 rounded-lg bg-[#075e61] px-3 py-3 font-semibold text-white"
+                      : "flex w-full items-center justify-between gap-3 rounded-lg px-3 py-3 text-[#51616b] hover:bg-[#eef5f3]"
+                  }
+                >
+                  <span className="flex items-center gap-3">
+                    <Icon name={link.icon} size={16} /> {link.label}
+                  </span>
+                  {link.badge && link.badge({ orders: orders.length, reports: chart.reports.length }) ? (
+                    <span className={sidebarActiveLabel[activeTab] === link.label ? "text-[10px] text-white/80" : "text-[10px] text-[#9aa7ac]"}>{link.badge({ orders: orders.length, reports: chart.reports.length })}</span>
+                  ) : null}
+                </button>
+              </Fragment>
             ))}
             <button onClick={() => router.push(workspacePath)} className="flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-[#51616b] hover:bg-[#eef5f3]">
               <Icon name="users" size={16} /> Patients
@@ -1357,13 +1376,17 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                     </div>
                   </div>
 
-                  <div className="flex items-start gap-2">
+                  <div className="flex flex-wrap items-start justify-end gap-2">
+                    <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${latest?.status === "pending_review" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
+                      <span className={`h-2 w-2 rounded-full ${latest?.status === "pending_review" ? "bg-red-500" : "bg-emerald-500"}`} />
+                      {latest?.status === "pending_review" ? "Needs review" : "Approved"}
+                    </span>
                     <button onClick={() => setAction("voice-encounter")} className={primaryButton}>
                       <Icon name="plus" size={14} /> New Encounter
                     </button>
                     <details className="relative">
                       <summary className={`${actionButton} cursor-pointer list-none bg-white`}>
-                        Actions <Icon name="chevron" size={13} className="rotate-90" />
+                        ••• <span className="sr-only">Patient actions</span>
                       </summary>
                       <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-xl border border-[#e3e9e8] bg-white p-2 shadow-2xl">
                         {latest?.status === "pending_review" && (
@@ -1401,7 +1424,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                   </div>
                 </div>
 
-                <nav className="mt-5 flex gap-6 overflow-x-auto border-b border-[#e3e9e8] text-xs text-[#65747a]">
+                <nav className="mt-5 flex gap-1 overflow-x-auto rounded-xl border border-[#dfe7e6] bg-white p-1 text-xs text-[#65747a]">
                   {TOP_TABS.map((tab) => (
                     <button
                       key={tab.id}
@@ -1411,9 +1434,9 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                         setEditingTab(null);
                         setEditDrafts({});
                       }}
-                      className={activeTab === tab.id ? "whitespace-nowrap border-b-2 border-[#0c716e] pb-3 font-semibold text-[#0c716e]" : "whitespace-nowrap pb-3 hover:text-[#0c716e]"}
+                      className={activeTab === tab.id ? "inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg bg-[#e8f5f2] px-3 font-semibold text-[#0c716e] shadow-sm" : "inline-flex h-10 items-center gap-2 whitespace-nowrap rounded-lg px-3 hover:bg-[#f7f9f9] hover:text-[#0c716e]"}
                     >
-                      {tab.label}
+                      <Icon name={tab.icon as IconName} size={14} /> {tab.label}
                     </button>
                   ))}
                 </nav>

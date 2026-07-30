@@ -1519,7 +1519,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
           </div>
         </div>
         {tab === "home" && <Dashboard workspace={workspace} records={records} voiceJobs={voiceJobs} loading={recordsLoading} error={recordsError} refresh={() => loadRecords()} />}
-        {tab === "ward-voice" && <WardVoice />}
+        {tab === "ward-voice" && <WardVoice role={workspace.current_user.role} />}
         {tab === "users" && <UsersPage />}
         {tab === "network" && <NetworkPage />}
         {tab === "library" && <LibraryPage workspace={workspace} records={records} loading={recordsLoading} />}

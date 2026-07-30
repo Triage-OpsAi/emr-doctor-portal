@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { Icon } from "@/components/Icon";
-import type { FluidChart, WardCountersign, WardVoiceBed, WardVoiceCaptureResult, WardVoiceObservation, WardVoiceOverview, WardVoiceWard } from "@/lib/types";
+import type { FluidChart, WardConsumable, WardCountersign, WardVoiceBed, WardVoiceCaptureResult, WardVoiceObservation, WardVoiceOverview, WardVoiceWard } from "@/lib/types";
 
-type WardTab = "rounds" | "capture" | "fluid" | "board" | "handover" | "countersigns" | "compliance";
+type WardTab = "rounds" | "capture" | "fluid" | "consumables" | "board" | "handover" | "countersigns" | "compliance";
 const tabs: { id: WardTab; label: string }[] = [
   { id: "rounds", label: "Rounds" }, { id: "capture", label: "Capture" },
-  { id: "fluid", label: "Fluid charts" }, { id: "board", label: "Ward board" },
+  { id: "fluid", label: "Fluid charts" }, { id: "consumables", label: "Consumables" }, { id: "board", label: "Ward board" },
   { id: "handover", label: "Handover" }, { id: "countersigns", label: "Countersigns" },
   { id: "compliance", label: "Compliance" },
 ];
@@ -136,7 +136,7 @@ function CapturePanel({ bed, onConfirmed }: { bed: WardVoiceBed | null; onConfir
   );
 }
 
-function FluidCharts({ bed, onChanged }: { bed: WardVoiceBed | null; onChanged: () => void }) {
+function FluidCharts({ bed, onChanged, reviewOnly = false }: { bed: WardVoiceBed | null; onChanged: () => void; reviewOnly?: boolean }) {
   const [chart, setChart] = useState<FluidChart | null>(null);
   const [showEntry, setShowEntry] = useState(false);
   const [showInfusion, setShowInfusion] = useState(false);
@@ -145,7 +145,10 @@ function FluidCharts({ bed, onChanged }: { bed: WardVoiceBed | null; onChanged: 
     if (!bed?.patient_id) return;
     apiFetch<FluidChart>(`/ward-voice/fluid-charts/${bed.id}`).then(setChart).catch((reason) => setError(reason.message));
   }, [bed]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const handle = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(handle);
+  }, [load]);
 
   async function addEntry(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -175,7 +178,7 @@ function FluidCharts({ bed, onChanged }: { bed: WardVoiceBed | null; onChanged: 
   }
 
   async function closeChart() {
-    if (!bed || !chart || !confirm("Close this 24-hour fluid chart? Closed charts cannot be overwritten.")) return;
+    if (!bed || !chart || !confirm(reviewOnly ? "Approve this I/O chart? Approved charts are locked from further changes." : "Close this 24-hour fluid chart? Closed charts cannot be overwritten.")) return;
     try {
       await apiFetch(`/ward-voice/fluid-charts/${bed.id}/close`, { method: "POST", body: JSON.stringify({ chart_date: chart.chart_date }) });
       load(); onChanged();
@@ -191,8 +194,8 @@ function FluidCharts({ bed, onChanged }: { bed: WardVoiceBed | null; onChanged: 
         <div><p className={`${mono} text-[#6d28d9]`}>Fluid chart · 24 hours</p><h2 className="mt-1 text-2xl font-black">{chart.patient_name} · Bed {chart.bed_number}</h2><p className="mt-1 text-xs text-[#777087]">{chart.patient_age ?? "—"} years · {chart.protocol || "Routine fluid monitoring"}</p></div>
         <div className="flex flex-wrap gap-2 print:hidden">
           <button onClick={() => window.print()} className="rounded-xl border border-[#d9cff7] px-4 py-2 text-sm font-bold">Print</button>
-          <button onClick={() => setShowInfusion(true)} disabled={chart.is_closed} className="rounded-xl border border-[#6d28d9] px-4 py-2 text-sm font-bold text-[#6d28d9] disabled:opacity-40">Start IV</button>
-          <button onClick={() => setShowEntry(true)} disabled={chart.is_closed} className="rounded-xl bg-[#6d28d9] px-4 py-2 text-sm font-bold text-white disabled:opacity-40">+ Add entry</button>
+          {!reviewOnly && <button onClick={() => setShowInfusion(true)} disabled={chart.is_closed} className="rounded-xl border border-[#6d28d9] px-4 py-2 text-sm font-bold text-[#6d28d9] disabled:opacity-40">Start IV</button>}
+          {!reviewOnly && <button onClick={() => setShowEntry(true)} disabled={chart.is_closed} className="rounded-xl bg-[#6d28d9] px-4 py-2 text-sm font-bold text-white disabled:opacity-40">+ Add entry</button>}
         </div>
       </div>
       {error && <p className="mx-5 mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}
@@ -214,7 +217,7 @@ function FluidCharts({ bed, onChanged }: { bed: WardVoiceBed | null; onChanged: 
           <tfoot><tr className="bg-[#eee9ff] font-bold"><td className="px-4 py-4" colSpan={2}>24-hour total</td><td className="px-4 py-4" colSpan={3}>Intake {chart.intake_ml} ml</td><td className="px-4 py-4" colSpan={3}>Output {chart.output_ml} ml</td><td className="px-4 py-4">Balance {chart.balance_ml >= 0 ? "+" : ""}{chart.balance_ml}</td></tr></tfoot>
         </table>
       </div>
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e8e1fb] p-4"><p className="text-xs text-[#625b73]">Arithmetic is deterministic: intake − output. IV = rate × elapsed time.</p>{chart.is_closed ? <span className={`${mono} rounded-full bg-emerald-100 px-3 py-2 text-emerald-700`}>Closed</span> : <button onClick={closeChart} className="rounded-xl border border-[#d9cff7] px-4 py-2 text-sm font-bold">Close 24-hour chart</button>}</div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e8e1fb] p-4"><p className="text-xs text-[#625b73]">Arithmetic is deterministic: intake − output. IV = rate × elapsed time.</p>{chart.is_closed ? <span className={`${mono} rounded-full bg-emerald-100 px-3 py-2 text-emerald-700`}>{reviewOnly ? "Approved by doctor" : "Closed"}</span> : <button onClick={closeChart} className={reviewOnly ? "rounded-xl bg-[#0c716e] px-5 py-3 text-sm font-bold text-white" : "rounded-xl border border-[#d9cff7] px-4 py-2 text-sm font-bold"}>{reviewOnly ? "Approve I/O chart" : "Close 24-hour chart"}</button>}</div>
       {(showEntry || showInfusion) && <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4 print:hidden"><form onSubmit={showEntry ? addEntry : addInfusion} className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"><div className="flex justify-between"><h3 className="text-xl font-bold">{showEntry ? "Add fluid entry" : "Start IV infusion"}</h3><button type="button" onClick={() => { setShowEntry(false); setShowInfusion(false); }}>✕</button></div><div className="mt-5 grid gap-4 sm:grid-cols-2">
         {showEntry ? <><label className="text-xs">Direction<select name="direction" className="mt-1 h-11 w-full rounded-lg border px-3"><option value="intake">Intake</option><option value="output">Output</option></select></label><label className="text-xs">Category<select name="category" className="mt-1 h-11 w-full rounded-lg border px-3">{["oral", "iv", "vomit", "drainage", "urine", "stool", "other"].map((item) => <option key={item}>{item}</option>)}</select></label><label className="text-xs">Amount (ml)<input name="amount_ml" type="number" min="1" required className="mt-1 h-11 w-full rounded-lg border px-3" /></label><label className="text-xs">Time<input name="occurred_at" type="datetime-local" required defaultValue={new Date().toISOString().slice(0, 16)} className="mt-1 h-11 w-full rounded-lg border px-3" /></label><label className="text-xs sm:col-span-2">Notes<input name="notes" className="mt-1 h-11 w-full rounded-lg border px-3" /></label></> : <><label className="text-xs sm:col-span-2">Fluid name<input name="fluid_name" required className="mt-1 h-11 w-full rounded-lg border px-3" /></label><label className="text-xs">Rate (ml/hr)<input name="rate" type="number" min="1" required className="mt-1 h-11 w-full rounded-lg border px-3" /></label><label className="text-xs">Started at<input name="started_at" type="datetime-local" required defaultValue={new Date().toISOString().slice(0, 16)} className="mt-1 h-11 w-full rounded-lg border px-3" /></label></>}
       </div><button className="mt-5 h-11 w-full rounded-xl bg-[#6d28d9] font-bold text-white">Save to chart</button></form></div>}
@@ -235,6 +238,76 @@ function CompliancePanel({ data, compact = false }: { data: WardVoiceOverview; c
   return <section className={`rounded-2xl border border-[#ddd2ff] bg-white ${compact ? "p-5" : "mt-5 p-6"}`}><h2 className="font-bold">Compliance — this ward, live</h2><div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">{items.map(([label, value], index) => <div key={label} className={`rounded-xl border p-4 ${index === 0 ? "border-[#6d28d9] bg-[#6d28d9] text-white" : "border-[#ddd2ff]"}`}><p className={mono}>{label}</p><p className="mt-2 text-2xl font-black">{value}</p></div>)}</div>{!compact && <div className="mt-5 overflow-hidden rounded-xl border border-[#e8e1fb]"><div className="border-b border-[#e8e1fb] p-4 font-bold">Audit trail</div>{data.audit.map((event) => <div key={event.id} className="grid gap-2 border-b border-[#eee9fb] p-4 text-xs sm:grid-cols-[1fr_1fr_auto]"><span><b>{event.action.replaceAll(".", " ")}</b> · {event.resource_type}</span><span>{event.user_name}</span><time className="font-mono">{new Date(event.created_at).toLocaleString()}</time></div>)}{!data.audit.length && <p className="p-6 text-sm text-[#777087]">No Ward Voice audit events yet.</p>}</div>}</section>;
 }
 
+function Consumables({ wardId, patientId, reviewMode = false }: { wardId?: string | null; patientId?: string | null; reviewMode?: boolean }) {
+  const [items, setItems] = useState<WardConsumable[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const params = new URLSearchParams();
+      if (wardId) params.set("ward_id", wardId);
+      if (patientId) params.set("patient_id", patientId);
+      const query = params.toString();
+      setItems(await apiFetch<WardConsumable[]>(`/ward-voice/consumables${query ? `?${query}` : ""}`));
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to load consumables");
+    } finally {
+      setLoading(false);
+    }
+  }, [patientId, wardId]);
+  useEffect(() => {
+    const handle = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(handle);
+  }, [load]);
+
+  async function approve(item: WardConsumable) {
+    try {
+      await apiFetch(`/ward-voice/countersigns/${item.id}`, { method: "POST" });
+      setMessage(`${item.item_name} approved.`);
+      await load();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "Unable to approve consumable");
+    }
+  }
+
+  return (
+    <section className={`${reviewMode ? "mt-4" : "mt-5"} overflow-hidden rounded-2xl border border-[#ddd2ff] bg-white`}>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#e8e1fb] p-5">
+        <div><h2 className="text-xl font-bold">{reviewMode ? "Consumables awaiting review" : "Patient consumables"}</h2><p className="mt-1 text-sm text-[#777087]">Confirmed food, drinks, and other consumed items from Ward Voice.</p></div>
+        <button type="button" onClick={() => void load()} className="rounded-lg border border-[#d9cff7] px-3 py-2 text-xs font-bold text-[#6d28d9]">Refresh</button>
+      </header>
+      {message && <p className="m-4 rounded-xl bg-[#f3efff] p-3 text-sm text-[#5520b5]">{message}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[860px] text-left text-xs">
+          <thead className="border-b border-[#e8e1fb] bg-[#faf9ff] text-[#625b73]"><tr>{["Patient / bed", "Consumed item", "Quantity", "Recorded by", "Recorded at", "Doctor approval"].map((label) => <th key={label} className={`${mono} px-4 py-3`}>{label}</th>)}</tr></thead>
+          <tbody className="divide-y divide-[#eee9fb]">
+            {items.map((item) => (
+              <tr key={item.id} className="hover:bg-[#faf8ff]">
+                <td className="px-4 py-4"><p className="font-bold">{item.patient_name}</p><p className="mt-1 text-[#777087]">Bed {item.bed_number}</p></td>
+                <td className="px-4 py-4 font-semibold">{item.item_name}</td>
+                <td className="px-4 py-4">{item.quantity_numeric !== null ? `${item.quantity_numeric} ${item.unit || ""}`.trim() : item.quantity_text || "Not stated"}</td>
+                <td className="px-4 py-4">{item.recorded_by}</td>
+                <td className="whitespace-nowrap px-4 py-4 text-[#777087]">{new Date(item.recorded_at).toLocaleString()}</td>
+                <td className="px-4 py-4">
+                  {item.approval_status === "approved" ? (
+                    <div><span className="rounded-full bg-emerald-100 px-2.5 py-1 font-bold text-emerald-700">Approved</span><p className="mt-2 text-[10px] text-[#777087]">{item.approved_by}{item.approved_at ? ` · ${new Date(item.approved_at).toLocaleString()}` : ""}</p></div>
+                  ) : reviewMode ? (
+                    <button type="button" onClick={() => void approve(item)} className="rounded-lg bg-[#0c716e] px-3 py-2 font-bold text-white">Approve</button>
+                  ) : <span className="rounded-full bg-amber-100 px-2.5 py-1 font-bold text-amber-700">Pending doctor</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {loading && <p className="p-10 text-center text-sm text-[#777087]">Loading consumables…</p>}
+      {!loading && !items.length && <p className="p-10 text-center text-sm text-[#777087]">No consumables have been confirmed yet.</p>}
+    </section>
+  );
+}
+
 function Countersigns({ onChanged }: { onChanged: () => void }) {
   const [items, setItems] = useState<WardCountersign[]>([]);
   const [message, setMessage] = useState("");
@@ -247,17 +320,22 @@ function Countersigns({ onChanged }: { onChanged: () => void }) {
   return <section className="mt-5 rounded-2xl border border-[#ddd2ff] bg-white p-5"><h2 className="text-xl font-bold">Pending countersigns</h2><p className="mt-1 text-sm text-[#777087]">A second clinician must review values flagged during nurse confirmation.</p>{message && <p className="mt-4 rounded-xl bg-[#eee9ff] p-3 text-sm">{message}</p>}<div className="mt-4 space-y-3">{items.map((item) => <div key={item.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-300 bg-amber-50 p-4"><div><p className="font-bold">Bed {item.bed_number} · {item.patient_name}</p><p className="mt-1 text-sm">{item.observation_type.replaceAll("_", " ")}: <b>{item.value_numeric ?? item.value_text ?? "—"} {item.unit}</b></p><p className="mt-1 text-xs text-[#777087]">Confirmed by {item.confirmed_by} · {new Date(item.confirmed_at).toLocaleString()}</p></div><button onClick={() => sign(item.id)} className="rounded-xl bg-[#6d28d9] px-4 py-2 text-sm font-bold text-white">Countersign</button></div>)}{!items.length && <p className="py-14 text-center text-sm text-[#777087]">No observations are awaiting countersign.</p>}</div></section>;
 }
 
-export function WardVoice() {
+export function WardVoice({ role }: { role: string }) {
   const [tab, setTab] = useState<WardTab>("rounds");
   const [wards, setWards] = useState<WardVoiceWard[]>([]);
   const [wardSearch, setWardSearch] = useState("");
   const [wardSort, setWardSort] = useState("az");
   const [roundSummaries, setRoundSummaries] = useState<Record<string, WardVoiceOverview>>({});
   const [patients, setPatients] = useState<WardVoiceBed[]>([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsError, setPatientsError] = useState("");
   const [data, setData] = useState<WardVoiceOverview | null>(null);
   const [selectedWardId, setSelectedWardId] = useState<string | null>(null);
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const patientRequest = useRef(0);
+  const isDoctor = role.toLowerCase() === "doctor";
+  const visibleTabs = isDoctor ? tabs.filter((item) => item.id === "rounds" || item.id === "countersigns") : tabs;
   const loadWards = useCallback(() => {
     apiFetch<WardVoiceWard[]>("/ward-voice/wards").then(setWards).catch((reason) => setError(reason.message));
   }, []);
@@ -267,15 +345,24 @@ export function WardVoice() {
       .then(setData)
       .catch((reason) => setError(reason.message));
   }, [selectedWardId]);
+  const fetchWardPatients = useCallback(async (wardId: string) => {
+    const requestId = ++patientRequest.current;
+    setPatientsLoading(true);
+    setPatientsError("");
+    try {
+      const value = await apiFetch<WardVoiceBed[]>(`/ward-voice/wards/${encodeURIComponent(wardId)}/patients`);
+      if (requestId !== patientRequest.current) return;
+      setPatients(value);
+      setSelectedBedId((current) => value.some((bed) => bed.id === current) ? current : null);
+    } catch (reason) {
+      if (requestId === patientRequest.current) setPatientsError(reason instanceof Error ? reason.message : "Unable to load ward patients");
+    } finally {
+      if (requestId === patientRequest.current) setPatientsLoading(false);
+    }
+  }, []);
   const loadPatients = useCallback(() => {
-    if (!selectedWardId) return;
-    apiFetch<WardVoiceBed[]>(`/ward-voice/wards/${encodeURIComponent(selectedWardId)}/patients`)
-      .then((value) => {
-        setPatients(value);
-        setSelectedBedId((current) => value.some((bed) => bed.id === current) ? current : null);
-      })
-      .catch((reason) => setError(reason.message));
-  }, [selectedWardId]);
+    if (selectedWardId) void fetchWardPatients(selectedWardId);
+  }, [fetchWardPatients, selectedWardId]);
   useEffect(() => { void loadWards(); }, [loadWards]);
   useEffect(() => {
     if (!wards.length) return;
@@ -289,7 +376,6 @@ export function WardVoice() {
       setRoundSummaries(next);
     });
   }, [wards]);
-  useEffect(() => { void loadPatients(); }, [loadPatients]);
   useEffect(() => {
     if (["board", "handover", "compliance"].includes(tab)) void loadOverview();
   }, [loadOverview, tab]);
@@ -307,7 +393,8 @@ export function WardVoice() {
     setSelectedBedId(null);
     setPatients([]);
     setData(null);
-    setTab("capture");
+    setTab(isDoctor ? "rounds" : "capture");
+    void fetchWardPatients(ward.id);
   }
 
   function patientList(action: (bed: WardVoiceBed) => void) {
@@ -318,7 +405,11 @@ export function WardVoice() {
           <p className="mt-1 text-xs text-[#777087]">Choose a patient by bed number</p>
         </header>
         <div className="space-y-2 p-3">
-          {patients.filter((bed) => bed.patient_id).map((bed) => (
+          {patientsLoading && <p className="py-12 text-center text-sm text-[#777087]">Loading ward patients…</p>}
+          {!patientsLoading && patientsError && (
+            <div className="py-10 text-center"><p className="text-sm text-red-600">{patientsError}</p><button type="button" onClick={loadPatients} className="mt-3 rounded-lg border border-[#d9cff7] px-4 py-2 text-xs font-bold text-[#6d28d9]">Retry</button></div>
+          )}
+          {!patientsLoading && !patientsError && patients.filter((bed) => bed.patient_id).map((bed) => (
             <button
               type="button"
               key={bed.id}
@@ -334,10 +425,10 @@ export function WardVoice() {
               <p className="mt-1 text-xs text-[#777087]">{bed.patient_age ?? "—"} years · {bed.protocol || "Ward observation"}</p>
             </button>
           ))}
-          {selectedWardId && !patients.some((bed) => bed.patient_id) && (
+          {!patientsLoading && !patientsError && selectedWardId && !patients.some((bed) => bed.patient_id) && (
             <p className="py-12 text-center text-sm text-[#777087]">No patients have been assigned to this ward.</p>
           )}
-          {!selectedWardId && <p className="py-12 text-center text-sm text-[#777087]">Open a ward from the Rounds tab first.</p>}
+          {!patientsLoading && !selectedWardId && <p className="py-12 text-center text-sm text-[#777087]">Open a ward from the Rounds tab first.</p>}
         </div>
       </section>
     );
@@ -351,11 +442,18 @@ export function WardVoice() {
           <p className="text-xs text-[#777087]">Voice-assisted nursing · human confirmed</p>
         </div>
         <nav className="mt-5 flex gap-1 overflow-x-auto border-b border-[#e4dcfa]" aria-label="Ward Voice">
-          {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 border-b-2 px-4 py-3 text-sm font-semibold ${tab === item.id ? "border-[#6d28d9] bg-[#eee9ff] text-[#5520b5]" : "border-transparent text-[#625b73]"}`}>{item.label}{item.id === "board" && <span className="ml-2 text-red-600">●</span>}</button>)}
+          {visibleTabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 border-b-2 px-4 py-3 text-sm font-semibold ${tab === item.id ? "border-[#6d28d9] bg-[#eee9ff] text-[#5520b5]" : "border-transparent text-[#625b73]"}`}>{item.label}{item.id === "board" && <span className="ml-2 text-red-600">●</span>}</button>)}
         </nav>
         {error && <p className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
         {tab === "rounds" && (
           <section className="mt-6">
+            {isDoctor && selectedWardId && (
+              <div>
+                <button type="button" onClick={() => { setSelectedWardId(null); setSelectedBedId(null); setPatients([]); }} className="mb-4 rounded-lg border border-[#d9cff7] bg-white px-4 py-2 text-sm font-bold text-[#6d28d9]">← Back to wards</button>
+                {patientList((bed) => { setSelectedBedId(bed.id); setTab("countersigns"); })}
+              </div>
+            )}
+            <div className={isDoctor && selectedWardId ? "hidden" : ""}>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
               {[
                 ["Assigned wards", wards.length, "▥"],
@@ -419,6 +517,7 @@ export function WardVoice() {
                 </div>
               </aside>
             </div>
+            </div>
           </section>
         )}
         {tab === "capture" && (
@@ -433,9 +532,38 @@ export function WardVoice() {
             <FluidCharts bed={selectedBed} onChanged={loadPatients} />
           </div>
         )}
+        {tab === "consumables" && <Consumables wardId={selectedWardId} />}
         {data && tab === "board" && <WardBoard data={data} onOpen={(bed) => { setSelectedBedId(bed.id); setTab("fluid"); }} />}
         {data && tab === "handover" && <div className="mt-5"><HandoverPanel data={data} /></div>}
-        {tab === "countersigns" && <Countersigns onChanged={loadPatients} />}
+        {tab === "countersigns" && isDoctor && (
+          <div className="mt-5">
+            <div className="mb-4 flex flex-col gap-2 sm:max-w-sm">
+              <label className="text-xs font-bold text-[#625b73]">Ward</label>
+              <select
+                value={selectedWardId || ""}
+                onChange={(event) => {
+                  const wardId = event.target.value;
+                  setSelectedWardId(wardId || null);
+                  setSelectedBedId(null);
+                  setPatients([]);
+                  if (wardId) void fetchWardPatients(wardId);
+                }}
+                className="h-11 rounded-xl border border-[#d9cff7] bg-white px-3 text-sm"
+              >
+                <option value="">Select a ward</option>
+                {wards.map((ward) => <option key={ward.id} value={ward.id}>{ward.name} · {ward.patient_count} patient{ward.patient_count === 1 ? "" : "s"}</option>)}
+              </select>
+            </div>
+            <div className="grid gap-4 xl:grid-cols-[380px_1fr]">
+              {patientList((bed) => setSelectedBedId(bed.id))}
+              <div>
+                <FluidCharts bed={selectedBed} onChanged={loadPatients} reviewOnly />
+                {selectedBed?.patient_id && <Consumables patientId={selectedBed.patient_id} reviewMode />}
+              </div>
+            </div>
+          </div>
+        )}
+        {tab === "countersigns" && !isDoctor && <Countersigns onChanged={loadPatients} />}
         {data && tab === "compliance" && <CompliancePanel data={data} />}
       </div>
     </main>

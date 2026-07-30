@@ -355,3 +355,20 @@ export type WardCountersign = {
   observation_type: string; value_numeric: number | null; value_text: string | null;
   unit: string | null; confirmed_by: string; confirmed_at: string;
 };
+
+export type WardConsumable = {
+  id: string;
+  capture_id: string;
+  patient_id: string;
+  patient_name: string;
+  bed_number: string;
+  item_name: string;
+  quantity_numeric: number | null;
+  quantity_text: string | null;
+  unit: string | null;
+  recorded_by: string;
+  recorded_at: string;
+  approval_status: "pending" | "approved";
+  approved_by: string | null;
+  approved_at: string | null;
+};
