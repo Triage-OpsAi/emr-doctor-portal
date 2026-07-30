@@ -757,6 +757,8 @@ function Dashboard({
   const [recordModal, setRecordModal] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
+  const [patientSearch, setPatientSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
   const approved = records.filter((record) => record.status === "approved").length;
   const pending = records.filter((record) => record.status === "pending_review").length;
   const jobsByPatient = new Map(
@@ -795,48 +797,137 @@ function Dashboard({
   const displayedRecords = [...provisionalPatients, ...registeredPatients].map(
     (record, index) => ({ ...record, serial_number: index + 1 }),
   );
+  const filteredRecords = displayedRecords.filter((record) => {
+    const query = patientSearch.trim().toLowerCase();
+    const matchesQuery = !query || [record.patient_name, record.patient_reference, record.subject]
+      .some((value) => value.toLowerCase().includes(query));
+    const matchesStatus = statusFilter === "all" || record.status === statusFilter;
+    return matchesQuery && matchesStatus;
+  });
+  const currentHour = new Date().getHours();
+  const greeting = currentHour < 12 ? "Good morning" : currentHour < 17 ? "Good afternoon" : "Good evening";
+  const metrics = [
+    { label: "Total patients", value: records.length, icon: "users" as IconName, tone: "blue" },
+    { label: "Pending review", value: pending, icon: "activity" as IconName, tone: "orange" },
+    { label: "Approved", value: approved, icon: "shield" as IconName, tone: "teal" },
+  ];
+  const updatedLabel = (value: string | null) => {
+    if (!value) return "Not updated";
+    return new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  };
+  const statusStyle = (status: string) => status === "approved"
+    ? "bg-[#def6ef] text-[#078777]"
+    : status === "draft"
+      ? "bg-[#e8efff] text-[#3564d8]"
+      : status === "needs_attention" || status === "failed"
+        ? "bg-[#ffe7e5] text-[#c74741]"
+        : "bg-[#fff0dd] text-[#e66b09]";
+  const statusLabel = (status: string) => status === "approved"
+    ? "Approved"
+    : status === "draft"
+      ? "Draft"
+      : status === "registering_patient" || status === "registered"
+        ? "Processing"
+        : status === "needs_attention" || status === "failed"
+          ? "Needs attention"
+          : "Pending review";
 
   return (
     <>
-      <header className="flex flex-col gap-4 border-b px-5 py-6 md:flex-row md:items-center md:justify-between md:px-8">
-        <div>
-          <p className="font-mono text-[10px] uppercase tracking-[.18em] text-[var(--teal)]">Clinical overview</p>
-          <h1 className="font-display mt-1 text-2xl font-semibold">Good day, {workspace.current_user.full_name.split(" ")[0]}</h1>
-        </div>
-        <button onClick={() => setRecordModal(true)} className={buttonPrimary}>
-          <Icon name="mic" size={17} /> Voice Patient Intake
-        </button>
-      </header>
-      <main className="space-y-6 p-5 md:p-8">
+      <main className="space-y-6 bg-[#f7f9fc] p-4 text-[#12203a] sm:p-6 lg:p-8 xl:p-10">
         {notice && (
           <div className="flex items-center justify-between rounded-lg border border-[var(--teal)]/30 bg-[var(--teal-soft)] p-3 text-sm text-[var(--teal)]">
             <span>Recording saved. The patient record is being prepared.</span>
             <button onClick={() => setNotice("")} className="focus-ring rounded p-1" aria-label="Dismiss message"><Icon name="close" size={14} /></button>
           </div>
         )}
-        <section className="grid gap-4 sm:grid-cols-3">
-          {[
-            ["Total patients", records.length, "users"],
-            ["Pending review", pending, "activity"],
-            ["Approved", approved, "shield"],
-          ].map(([label, value, icon]) => (
-            <div key={String(label)} className="rounded-xl border bg-[var(--ink-elevated)] p-5 shadow-[0_8px_30px_var(--shadow)]">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[var(--muted)]">{label}</span>
-                <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name={icon as IconName} size={16} /></span>
-              </div>
-              <p className="font-display mt-4 text-3xl">{value}</p>
+        <header className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-4">
+            <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl bg-[#fff0dc] text-3xl shadow-sm" aria-hidden="true">👋</span>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-[#111a2d] sm:text-3xl">
+                {greeting}, {workspace.current_user.full_name.split(" ")[0]}
+              </h1>
+              <p className="mt-1 text-sm text-[#697791] sm:text-base">Here&apos;s your clinical overview for today.</p>
             </div>
-          ))}
+          </div>
+          <button onClick={() => setRecordModal(true)} className="focus-ring inline-flex h-14 items-center justify-center gap-4 rounded-xl bg-gradient-to-r from-[#13a99e] to-[#07968c] px-6 text-base font-semibold text-white shadow-[0_10px_25px_rgba(8,151,141,.22)] transition hover:-translate-y-0.5 hover:brightness-105 sm:min-w-72">
+            <Icon name="mic" size={23} /> Voice Patient Intake <Icon name="chevron" size={18} />
+          </button>
+        </header>
+
+        <section className="grid gap-4 sm:grid-cols-3">
+          {metrics.map((metric) => {
+            const tones = metric.tone === "blue"
+              ? { icon: "bg-[#eaf0ff] text-[#3064ed]", line: "#3064ed" }
+              : metric.tone === "orange"
+                ? { icon: "bg-[#fff1df] text-[#f27a16]", line: "#f27a16" }
+                : { icon: "bg-[#e4f6f3] text-[#0b9b91]", line: "#0b9b91" };
+            return (
+            <div key={metric.label} className="rounded-2xl border border-[#dce3ec] bg-white p-5 shadow-[0_8px_24px_rgba(24,43,76,.07)] lg:p-6">
+              <div className="flex items-center gap-4">
+                <span className={`grid h-14 w-14 shrink-0 place-items-center rounded-xl ${tones.icon}`}><Icon name={metric.icon} size={25} /></span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[#66738d]">{metric.label}</p>
+                  <p className="mt-1 text-3xl font-semibold text-[#101a2d]">{metric.value}</p>
+                  <p className="mt-2 text-xs text-[#8793a8]">Live hospital data</p>
+                </div>
+                <svg className="hidden h-12 w-24 shrink-0 lg:block" viewBox="0 0 96 48" fill="none" aria-hidden="true">
+                  <path d="M2 38C16 37 24 34 31 21C38 8 45 8 51 22C58 38 65 35 72 28C80 20 87 21 94 24" stroke={tones.line} strokeWidth="2.2" strokeLinecap="round" />
+                </svg>
+              </div>
+            </div>
+          )})}
         </section>
 
-        <section className="overflow-hidden rounded-xl border bg-[var(--ink-elevated)] shadow-[0_8px_30px_var(--shadow)]">
-          <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
-            <h2 className="font-display font-semibold">Patient records</h2>
-            <button onClick={refresh} className={buttonSecondary}><Icon name="refresh" size={14} /> Refresh</button>
+        {pending > 0 && (
+          <section className="flex flex-col gap-4 rounded-2xl border border-[#f4d7b2] bg-[#fffaf3] p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-4">
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-[#fff0db] text-[#f17812]"><Icon name="bell" size={20} /></span>
+              <p className="text-sm text-[#27334a]"><strong className="mr-6 font-semibold text-[#111a2d]">Needs attention</strong>{pending} {pending === 1 ? "patient is" : "patients are"} pending review.</p>
+            </div>
+            <button onClick={() => setStatusFilter("pending_review")} className="focus-ring inline-flex h-10 items-center justify-center gap-3 rounded-lg border border-[#ead8c2] bg-white px-4 text-sm font-medium text-[#1f2b42] hover:bg-[#fff8ed]">View all pending <Icon name="chevron" size={15} /></button>
+          </section>
+        )}
+
+        <section className="overflow-hidden rounded-2xl border border-[#dce3ec] bg-white shadow-[0_8px_24px_rgba(24,43,76,.06)]">
+          <div className="flex flex-col gap-4 border-b border-[#e1e6ee] p-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-[#111a2d]">Patient records</h2>
+              <p className="mt-1 text-xs text-[#748198]">Review, complete, and approve patient records.</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <label className="relative block sm:w-72">
+                <span className="sr-only">Search patients</span>
+                <Icon name="search" size={17} className="pointer-events-none absolute left-3 top-3 text-[#718099]" />
+                <input value={patientSearch} onChange={(event) => setPatientSearch(event.target.value)} placeholder="Search patients by name or ID..." className="focus-ring h-11 w-full rounded-lg border border-[#d9e0ea] bg-white pl-10 pr-3 text-sm text-[#243047] placeholder:text-[#8894a8]" />
+              </label>
+              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="focus-ring h-11 rounded-lg border border-[#d9e0ea] bg-white px-3 text-sm text-[#344158]">
+                <option value="all">All statuses</option>
+                <option value="pending_review">Pending review</option>
+                <option value="approved">Approved</option>
+                <option value="draft">Draft</option>
+              </select>
+              <button onClick={refresh} className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#d9e0ea] bg-white px-4 text-sm font-medium text-[#344158] hover:bg-[#f7f9fc]"><Icon name="refresh" size={15} /> Refresh</button>
+            </div>
           </div>
           {error && <p className="m-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
-          <div className="overflow-x-auto">
+          <div className="divide-y divide-[#e6eaf0] md:hidden">
+            {loading ? <p className="p-8 text-center text-sm text-[#748198]">Loading patient records…</p> : filteredRecords.length === 0 ? <p className="p-8 text-center text-sm text-[#748198]">No matching patients</p> : filteredRecords.map((record) => (
+              <button key={record.id} disabled={record.id.startsWith("job-")} onClick={() => router.push(`${workspace.workspace_path}/patient/${record.id}`)} className="focus-ring block w-full p-4 text-left transition hover:bg-[#f8fafd] disabled:cursor-default">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-[#1d2940]">{record.patient_name}</p>
+                    <p className="mt-1 text-xs text-[#738097]">{record.patient_reference} · {record.age ?? "Age not recorded"}</p>
+                  </div>
+                  <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-medium ${statusStyle(record.status)}`}>{statusLabel(record.status)}</span>
+                </div>
+                <p className="mt-3 line-clamp-2 text-sm leading-5 text-[#59677f]">{record.subject}</p>
+                <div className="mt-3 flex items-center justify-between text-xs text-[#8792a5]"><span>{updatedLabel(record.last_visit_at || record.created_at)}</span><Icon name="chevron" size={15} /></div>
+              </button>
+            ))}
+          </div>
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full min-w-[850px] border-collapse text-left">
               <thead>
                 <tr className="border-b bg-[var(--ink)] font-mono text-[10px] uppercase tracking-[.1em] text-[var(--faint)]">
@@ -852,9 +943,9 @@ function Dashboard({
               <tbody>
                 {loading ? (
                   <tr><td colSpan={7} className="p-10 text-center text-sm text-[var(--muted)]">Loading patient records…</td></tr>
-                ) : displayedRecords.length === 0 ? (
+                ) : filteredRecords.length === 0 ? (
                   <tr><td colSpan={7} className="p-12 text-center"><Icon name="file" size={28} className="mx-auto text-[var(--faint)]" /><p className="mt-3 text-sm">No patients yet</p></td></tr>
-                ) : displayedRecords.map((record) => (
+                ) : filteredRecords.map((record) => (
                   <Fragment key={record.id}>
                     <tr className="border-b text-sm hover:bg-[var(--ink-panel)]">
                       <td className="px-4 py-4">
@@ -872,20 +963,17 @@ function Dashboard({
                       <td className="px-3 py-4">{record.age ?? "—"}</td>
                       <td className="max-w-xs truncate px-3 py-4 text-[var(--muted)]">{record.subject}</td>
                       <td className="px-3 py-4">
-                        {record.id.startsWith("job-") ? <StatusPill status={record.status} /> : (
-                          <div className="min-w-28">
-                            <p className="text-xs font-semibold text-[var(--teal)]">Approved {record.approval_percentage || 0}%</p>
-                            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--ink-panel)]">
-                              <div className="h-full rounded-full bg-[var(--teal)]" style={{ width: `${record.approval_percentage || 0}%` }} />
-                            </div>
-                          </div>
-                        )}
+                        <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-medium ${statusStyle(record.status)}`}>{statusLabel(record.status)}</span>
                       </td>
                     </tr>
                   </Fragment>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="flex items-center justify-between border-t border-[#e1e6ee] px-5 py-4 text-xs text-[#718099]">
+            <span>Showing {filteredRecords.length} of {displayedRecords.length} patients</span>
+            <span>Live hospital records</span>
           </div>
         </section>
       </main>
@@ -1330,6 +1418,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
     () => NAV.filter((item) => !item.permission || workspace?.current_user.permissions.includes(item.permission)),
     [workspace],
   );
+  const notificationCount = records.filter((record) => record.status === "pending_review").length;
 
   async function logout() {
     queueAuditEvent({ action: AUDIT_EVENTS.USER_LOGOUT, event_category: "authentication", resource_type: "session" });
@@ -1343,38 +1432,33 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
   }
 
   return (
-    <div className="min-h-screen bg-[var(--ink)] text-[var(--text)]">
+    <div className="min-h-screen bg-[#f7f9fc] text-[#12203a]">
       {mobileOpen && <button className="fixed inset-0 z-30 bg-black/55 lg:hidden" onClick={() => setMobileOpen(false)} aria-label="Close navigation" />}
-      <aside className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r bg-[var(--ink-elevated)] transition-all duration-200 ${collapsed ? "w-[72px]" : "w-64"} ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
-        <div className={`flex h-16 items-center border-b px-4 ${collapsed ? "justify-center" : "gap-3"}`}>
-          <TriCareLogo size={32} className="shadow-sm" />
-          {!collapsed && <div className="min-w-0"><p className="truncate font-display text-sm font-semibold">Tri-Care</p><p className="truncate font-mono text-[9px] uppercase tracking-[.12em] text-[var(--faint)]">Doctor portal</p></div>}
+      <aside className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-white/10 bg-[linear-gradient(180deg,#091d43_0%,#082656_58%,#071d43_100%)] text-white shadow-[10px_0_35px_rgba(7,29,67,.12)] transition-all duration-200 ${collapsed ? "w-[76px]" : "w-[264px]"} ${mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"}`}>
+        <div className={`flex h-[102px] items-center border-b border-white/10 px-5 ${collapsed ? "justify-center" : "gap-4"}`}>
+          <TriCareLogo size={44} className="rounded-xl bg-transparent shadow-none" />
+          {!collapsed && <div className="min-w-0"><p className="truncate text-xl font-semibold tracking-tight">Tri-Care</p><p className="mt-1 truncate text-[10px] uppercase tracking-[.18em] text-white/55">Doctor portal</p></div>}
         </div>
-        <div className={`border-b p-4 ${collapsed ? "px-3" : ""}`}>
-          <div className={`rounded-lg bg-[var(--ink)] p-3 ${collapsed ? "grid place-items-center p-2" : ""}`}>
-            <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name="building" size={16} /></span>
-            {!collapsed && <><p className="mt-2 truncate text-xs font-medium">{workspace.organization.name}</p><p className="mt-1 truncate font-mono text-[9px] text-[var(--faint)]">{workspace.organization.code}</p></>}
-          </div>
-        </div>
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="flex-1 space-y-2 p-4 pt-6">
           {visibleNav.map((item) => (
-            <button key={item.id} onClick={() => { setTab(item.id); setMobileOpen(false); }} title={collapsed ? item.label : undefined} className={`focus-ring flex h-10 w-full items-center rounded-lg text-sm transition ${collapsed ? "justify-center" : "gap-3 px-3"} ${tab === item.id ? "bg-[var(--teal-soft)] text-[var(--teal)]" : "text-[var(--muted)] hover:bg-[var(--ink-panel)] hover:text-[var(--text)]"}`}>
-              <Icon name={item.icon} size={17} /> {!collapsed && <span>{item.label}</span>}
+            <button key={item.id} onClick={() => { setTab(item.id); setMobileOpen(false); }} title={collapsed ? item.label : undefined} className={`focus-ring flex h-14 w-full items-center rounded-xl text-[15px] font-medium transition ${collapsed ? "justify-center" : "gap-4 px-4"} ${tab === item.id ? "bg-[linear-gradient(135deg,#315aa8,#284b91)] text-white shadow-[0_8px_18px_rgba(1,12,37,.25)]" : "text-white/72 hover:bg-white/10 hover:text-white"}`}>
+              <Icon name={item.icon} size={21} /> {!collapsed && <span>{item.label}</span>}
             </button>
           ))}
         </nav>
-        <div className="space-y-1 border-t p-3">
-          <button onClick={logout} className={`focus-ring flex h-10 w-full items-center rounded-lg text-sm text-[var(--muted)] hover:bg-red-500/10 hover:text-[var(--danger)] ${collapsed ? "justify-center" : "gap-3 px-3"}`}><Icon name="logout" size={17} />{!collapsed && "Logout"}</button>
-          <button onClick={() => setCollapsed((value) => !value)} className={`focus-ring hidden h-10 w-full items-center rounded-lg text-sm text-[var(--faint)] hover:bg-[var(--ink-panel)] lg:flex ${collapsed ? "justify-center" : "gap-3 px-3"}`}><Icon name="chevron" size={17} className={collapsed ? "" : "rotate-180"} />{!collapsed && "Collapse"}</button>
+        <div className="space-y-1 border-t border-white/10 p-4">
+          <button onClick={logout} className={`focus-ring flex h-12 w-full items-center rounded-xl text-sm text-white/75 hover:bg-red-400/10 hover:text-white ${collapsed ? "justify-center" : "gap-4 px-4"}`}><Icon name="logout" size={20} />{!collapsed && "Logout"}</button>
+          <button onClick={() => setCollapsed((value) => !value)} className={`focus-ring hidden h-12 w-full items-center rounded-xl text-sm text-white/65 hover:bg-white/10 hover:text-white lg:flex ${collapsed ? "justify-center" : "gap-4 px-4"}`}><Icon name="chevron" size={19} className={collapsed ? "" : "rotate-180"} />{!collapsed && "Collapse"}</button>
         </div>
       </aside>
-      <div className={`transition-[margin] duration-200 ${collapsed ? "lg:ml-[72px]" : "lg:ml-64"}`}>
-        <div className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-[var(--ink)]/90 px-5 backdrop-blur md:px-8">
-          <button onClick={() => setMobileOpen(true)} className="focus-ring rounded-lg p-2 text-[var(--muted)] lg:hidden" aria-label="Open navigation"><Icon name="menu" /></button>
+      <div className={`transition-[margin] duration-200 ${collapsed ? "lg:ml-[76px]" : "lg:ml-[264px]"}`}>
+        <div className="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b border-[#dfe5ed] bg-white/95 px-4 text-[#14203a] backdrop-blur sm:px-6 lg:px-8">
+          <button onClick={() => setMobileOpen(true)} className="focus-ring rounded-lg p-2 text-[#5e6c86] lg:hidden" aria-label="Open navigation"><Icon name="menu" /></button>
           <div className="hidden items-center gap-2 text-xs text-[var(--faint)] sm:flex"><span>{workspace.organization.name}</span><span>·</span><span className="capitalize">{workspace.current_user.role.replaceAll("_", " ")}</span></div>
-          <div className="ml-auto flex items-center gap-4">
+          <div className="ml-auto flex items-center gap-3 sm:gap-5">
             <ThemeToggle />
-            <div className="flex items-center gap-2"><div className="hidden text-right sm:block"><p className="text-xs font-medium">{workspace.current_user.full_name}</p><p className="text-[10px] text-[var(--faint)]">{workspace.current_user.email}</p></div><span className="grid h-8 w-8 place-items-center rounded-full border border-[var(--teal)]/30 bg-[var(--teal-soft)] text-[10px] font-semibold text-[var(--teal)]">{workspace.current_user.full_name.split(/\s+/).slice(0, 2).map((part) => part[0]).join("")}</span></div>
+            <span className="relative grid h-9 w-9 place-items-center text-[#62708a]"><Icon name="bell" size={21} />{notificationCount > 0 && <span className="absolute right-0 top-0 grid h-4 min-w-4 place-items-center rounded-full bg-[#12a89d] px-1 text-[9px] font-bold text-white">{notificationCount}</span>}</span>
+            <div className="flex items-center gap-3 border-l border-[#e1e6ee] pl-3 sm:pl-5"><span className="grid h-10 w-10 place-items-center rounded-full bg-[#edf2ff] text-sm font-semibold text-[#315fdd]">{workspace.current_user.full_name.slice(0, 1)}</span><div className="hidden text-left md:block"><p className="text-sm font-semibold">{workspace.current_user.full_name}</p><p className="max-w-44 truncate text-[10px] text-[#8490a5]">{workspace.current_user.email}</p></div></div>
           </div>
         </div>
         {tab === "home" && <Dashboard workspace={workspace} records={records} voiceJobs={voiceJobs} loading={recordsLoading} error={recordsError} refresh={() => loadRecords()} />}

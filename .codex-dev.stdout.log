@@ -1,0 +1,11 @@
+
+> doctor-portal@0.1.0 dev
+> next dev
+
+▲ Next.js 16.2.11 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.0.105:3000
+- Environments: .env
+✓ Ready in 1416ms
+Creating turbopack project { dir: 'E:\\healthai-platform-2\\doctor-portal', testMode: true }
+

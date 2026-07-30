@@ -8,11 +8,11 @@ type ThemeValue = { theme: Theme; toggleTheme: () => void };
 const ThemeContext = createContext<ThemeValue | null>(null);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setTheme] = useState<Theme>("dark");
+  const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
-    const saved = localStorage.getItem("meridian_doctor_theme") as Theme | null;
-    const next = saved === "light" ? "light" : "dark";
+    const saved = localStorage.getItem("tri_care_doctor_theme") as Theme | null;
+    const next = saved === "dark" ? "dark" : "light";
     // Synchronize the persisted browser preference after hydration.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(next);
@@ -25,7 +25,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       toggleTheme: () =>
         setTheme((current) => {
           const next = current === "dark" ? "light" : "dark";
-          localStorage.setItem("meridian_doctor_theme", next);
+          localStorage.setItem("tri_care_doctor_theme", next);
           document.documentElement.dataset.theme = next;
           return next;
         }),
