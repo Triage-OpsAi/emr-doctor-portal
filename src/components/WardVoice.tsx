@@ -250,6 +250,9 @@ function Countersigns({ onChanged }: { onChanged: () => void }) {
 export function WardVoice() {
   const [tab, setTab] = useState<WardTab>("rounds");
   const [wards, setWards] = useState<WardVoiceWard[]>([]);
+  const [wardSearch, setWardSearch] = useState("");
+  const [wardSort, setWardSort] = useState("az");
+  const [roundSummaries, setRoundSummaries] = useState<Record<string, WardVoiceOverview>>({});
   const [patients, setPatients] = useState<WardVoiceBed[]>([]);
   const [data, setData] = useState<WardVoiceOverview | null>(null);
   const [selectedWardId, setSelectedWardId] = useState<string | null>(null);
@@ -274,12 +277,30 @@ export function WardVoice() {
       .catch((reason) => setError(reason.message));
   }, [selectedWardId]);
   useEffect(() => { void loadWards(); }, [loadWards]);
+  useEffect(() => {
+    if (!wards.length) return;
+    Promise.allSettled(
+      wards.map((ward) => apiFetch<WardVoiceOverview>(`/ward-voice/overview?ward_id=${encodeURIComponent(ward.id)}`)),
+    ).then((results) => {
+      const next: Record<string, WardVoiceOverview> = {};
+      results.forEach((result, index) => {
+        if (result.status === "fulfilled") next[wards[index].id] = result.value;
+      });
+      setRoundSummaries(next);
+    });
+  }, [wards]);
   useEffect(() => { void loadPatients(); }, [loadPatients]);
   useEffect(() => {
     if (["board", "handover", "compliance"].includes(tab)) void loadOverview();
   }, [loadOverview, tab]);
   const selectedBed = patients.find((bed) => bed.id === selectedBedId) || null;
   const selectedWard = wards.find((ward) => ward.id === selectedWardId) || null;
+  const visibleWards = wards
+    .filter((ward) => [ward.name, ward.code].some((value) => value.toLowerCase().includes(wardSearch.trim().toLowerCase())))
+    .sort((a, b) => wardSort === "za" ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name));
+  const activePatients = wards.reduce((sum, ward) => sum + ward.patient_count, 0);
+  const roundsDue = Object.values(roundSummaries).reduce((sum, item) => sum + item.kpis.due_next_hour, 0);
+  const completedThisShift = Object.values(roundSummaries).reduce((sum, item) => sum + item.kpis.done_this_shift, 0);
 
   function openWard(ward: WardVoiceWard) {
     setSelectedWardId(ward.id);
@@ -334,19 +355,70 @@ export function WardVoice() {
         </nav>
         {error && <p className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
         {tab === "rounds" && (
-          <section className="mt-5">
-            <div className="mb-5"><h2 className="text-xl font-black">Select a ward</h2><p className="mt-1 text-sm text-[#777087]">Only wards assigned to patients are shown.</p></div>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {wards.map((ward) => (
-                <button key={ward.id} onClick={() => openWard(ward)} className="aspect-square min-h-48 rounded-3xl border border-[#d7c9ff] bg-white p-6 text-center shadow-sm transition hover:-translate-y-1 hover:border-[#6d28d9] hover:shadow-xl">
-                  <p className={mono}>Ward</p>
-                  <p className="mt-8 text-4xl font-black text-[#6d28d9]">{ward.name}</p>
-                  <p className="mt-5 text-sm font-semibold">{ward.patient_count} patient{ward.patient_count === 1 ? "" : "s"}</p>
-                  <p className={`${mono} mt-2 text-[#777087]`}>{ward.code}</p>
-                </button>
+          <section className="mt-6">
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                ["Assigned wards", wards.length, "▥"],
+                ["Active patients", activePatients, "♙"],
+                ["Rounds due", roundsDue, "◷"],
+                ["Completed this shift", completedThisShift, "✓"],
+              ].map(([label, value, glyph]) => (
+                <div key={String(label)} className="flex items-center gap-5 rounded-2xl border border-[#ddd8ed] bg-white p-5 shadow-[0_8px_24px_rgba(52,35,92,.06)]">
+                  <span className="grid h-12 w-12 place-items-center rounded-xl bg-[#f0ebff] text-2xl font-bold text-[#6d28d9]">{glyph}</span>
+                  <div><p className="text-sm text-[#746d85]">{label}</p><p className="mt-1 text-2xl font-black text-[#171226]">{value}</p></div>
+                </div>
               ))}
             </div>
-            {!wards.length && !error && <p className="rounded-2xl border border-[#ddd2ff] bg-white py-20 text-center text-sm text-[#777087]">No patients have a ward and bed assignment yet. Open a patient and save both fields.</p>}
+            <div className="mt-7">
+              <h2 className="text-xl font-black">Select a ward</h2>
+              <p className="mt-1 text-sm text-[#777087]">Only wards assigned to patients are shown.</p>
+            </div>
+            <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <label className="relative block w-full sm:max-w-xl">
+                <span className="sr-only">Search wards</span>
+                <span className="pointer-events-none absolute left-4 top-3 text-[#777087]">⌕</span>
+                <input value={wardSearch} onChange={(event) => setWardSearch(event.target.value)} placeholder="Search wards" className="h-12 w-full rounded-xl border border-[#d9cff7] bg-white pl-11 pr-4 text-sm outline-none focus:border-[#6d28d9]" />
+              </label>
+              <select value={wardSort} onChange={(event) => setWardSort(event.target.value)} className="h-12 rounded-xl border border-[#d9cff7] bg-white px-4 text-sm font-semibold">
+                <option value="az">Sort by: A–Z</option>
+                <option value="za">Sort by: Z–A</option>
+              </select>
+            </div>
+            <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+              <div className="grid gap-4 lg:grid-cols-2">
+                {visibleWards.map((ward) => {
+                  const summary = roundSummaries[ward.id];
+                  return (
+                    <button key={ward.id} onClick={() => openWard(ward)} className="group min-h-56 rounded-2xl border border-[#d7c9ff] bg-white p-5 text-left shadow-[0_8px_24px_rgba(52,35,92,.06)] transition hover:-translate-y-0.5 hover:border-[#6d28d9] hover:shadow-lg">
+                      <div className="flex gap-6">
+                        <div className="w-36 shrink-0 border-r border-[#e4def2]">
+                          <p className={mono}>Ward</p>
+                          <p className="mt-2 text-5xl font-black text-[#6d28d9]">{ward.name}</p>
+                          <p className="mt-3 text-sm font-bold">{ward.patient_count} patient{ward.patient_count === 1 ? "" : "s"}</p>
+                        </div>
+                        <div className="space-y-5 pt-1 text-sm text-[#544d64]">
+                          <p><span className="mr-3 text-lg text-[#6d28d9]">▰</span>{ward.patient_count} active bed{ward.patient_count === 1 ? "" : "s"}</p>
+                          <p><span className="mr-3 text-lg text-red-500">◷</span>{summary?.kpis.due_next_hour || 0} round{summary?.kpis.due_next_hour === 1 ? "" : "s"} due</p>
+                        </div>
+                      </div>
+                      <div className="mt-6 flex items-center justify-between border-t border-[#e8e1fb] pt-4 text-sm font-bold text-[#6d28d9]"><span>Open ward</span><span className="transition group-hover:translate-x-1">›</span></div>
+                    </button>
+                  );
+                })}
+                {!visibleWards.length && !error && <p className="rounded-2xl border border-[#ddd2ff] bg-white py-20 text-center text-sm text-[#777087] lg:col-span-2">{wards.length ? "No wards match your search." : "No patients have a ward and bed assignment yet. Open a patient and save both fields."}</p>}
+              </div>
+              <aside className="self-start rounded-2xl border border-[#ddd8ed] bg-white p-5 shadow-[0_8px_24px_rgba(52,35,92,.06)]">
+                <h3 className="font-bold">Next actions</h3>
+                <div className="mt-4 overflow-hidden rounded-xl border border-[#e5dff2]">
+                  <button onClick={() => visibleWards[0] && openWard(visibleWards[0])} disabled={!visibleWards.length} className="flex w-full items-center justify-between border-b border-[#e8e1fb] p-4 text-left disabled:opacity-50">
+                    <span><span className="block text-sm font-semibold">{roundsDue} round{roundsDue === 1 ? "" : "s"} due</span><span className="mt-1 block text-xs text-[#777087]">Across assigned wards</span></span><span>›</span>
+                  </button>
+                  <button onClick={() => visibleWards[0] && openWard(visibleWards[0])} disabled={!visibleWards.length} className="flex w-full items-center justify-between p-4 text-left disabled:opacity-50">
+                    <span><span className="block text-sm font-semibold">Start new capture</span><span className="mt-1 block text-xs text-[#777087]">Voice-assisted documentation</span></span><span>›</span>
+                  </button>
+                </div>
+              </aside>
+            </div>
           </section>
         )}
         {tab === "capture" && (

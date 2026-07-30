@@ -1005,21 +1005,37 @@ function SettingsPage({ workspace }: { workspace: Workspace }) {
   ];
   return (
     <>
-      <PageHeader eyebrow="Organisation settings" title="Workspace details" />
-      <main className="p-5 md:p-8">
-        <div className="max-w-4xl overflow-hidden rounded-xl border bg-[var(--ink-elevated)]">
-          <div className="flex items-center gap-3 border-b p-5">
-            <span className="grid h-10 w-10 place-items-center rounded-lg bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name="building" /></span>
-            <div><h2 className="font-display font-semibold">{organization.name}</h2><p className="font-mono text-xs text-[var(--faint)]">{organization.code}</p></div>
-          </div>
-          <div className="grid md:grid-cols-2">
-            {rows.map(([label, value]) => (
-              <div key={label} className="border-b p-5 md:border-r">
-                <p className="font-mono text-[10px] uppercase tracking-[.1em] text-[var(--faint)]">{label}</p>
-                <p className="mt-2 text-sm">{value}</p>
-              </div>
-            ))}
-          </div>
+      <PageHeader eyebrow="Organisation settings" title="Workspace details" subtitle="Hospital identity, contact information, and tenant configuration." />
+      <main className="bg-[#f7f9fc] p-5 text-[#12203a] md:p-8">
+        <div className="grid max-w-6xl gap-5 lg:grid-cols-[320px_1fr]">
+          <section className="self-start rounded-2xl border border-[#dce3ec] bg-white p-6 shadow-[0_8px_24px_rgba(24,43,76,.06)]">
+            <span className="grid h-14 w-14 place-items-center rounded-2xl bg-[#e4f6f3] text-[#0b9b91]"><Icon name="building" size={25} /></span>
+            <h2 className="mt-5 text-xl font-semibold text-[#111a2d]">{organization.name}</h2>
+            <p className="mt-2 text-xs font-medium tracking-wide text-[#748198]">{organization.code}</p>
+            <div className="mt-6 border-t border-[#e5eaf0] pt-5">
+              <p className="text-[10px] font-semibold uppercase tracking-[.12em] text-[#8490a5]">Workspace type</p>
+              <p className="mt-2 text-sm font-medium text-[#344158]">{organization.is_network_hospital ? "Network hospital" : "Hospital workspace"}</p>
+              {organization.parent_name && <p className="mt-1 text-xs text-[#748198]">Part of {organization.parent_name}</p>}
+            </div>
+          </section>
+          <section className="overflow-hidden rounded-2xl border border-[#dce3ec] bg-white shadow-[0_8px_24px_rgba(24,43,76,.06)]">
+            <div className="border-b border-[#e1e6ee] px-6 py-5">
+              <h2 className="text-lg font-semibold text-[#111a2d]">Organization information</h2>
+              <p className="mt-1 text-xs text-[#748198]">Current information stored for this clinical tenant.</p>
+            </div>
+            <dl className="grid sm:grid-cols-2">
+              {rows.map(([label, value]) => (
+                <div key={label} className="border-b border-[#e6eaf0] p-5 sm:odd:border-r">
+                  <dt className="text-[10px] font-semibold uppercase tracking-[.1em] text-[#8490a5]">{label}</dt>
+                  <dd className="mt-2 break-words text-sm font-medium text-[#2b384f]">{value}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="flex items-center gap-3 bg-[#f8fafd] px-6 py-4 text-xs text-[#67748b]">
+              <Icon name="shield" size={16} className="text-[#0b9b91]" />
+              Workspace details are tenant-scoped and visible only to authorized clinical users.
+            </div>
+          </section>
         </div>
       </main>
     </>
@@ -1200,15 +1216,65 @@ function NetworkPage() {
   );
 }
 
-function LibraryPage() {
+function LibraryPage({ workspace, records, loading }: { workspace: Workspace; records: PatientDashboardRecord[]; loading: boolean }) {
+  const router = useRouter();
+  const [search, setSearch] = useState("");
+  const filtered = records.filter((record) => {
+    const query = search.trim().toLowerCase();
+    return !query || [record.patient_name, record.patient_reference, record.subject].some((value) => value.toLowerCase().includes(query));
+  });
+  const approved = records.filter((record) => record.status === "approved").length;
+  const pending = records.filter((record) => record.status === "pending_review").length;
+
   return (
     <>
-      <PageHeader eyebrow="Clinical resources" title="EHR Library" />
-      <main className="p-5 md:p-8">
-        <div className="rounded-xl border border-dashed bg-[var(--ink-elevated)] p-12 text-center">
-          <span className="mx-auto grid h-14 w-14 place-items-center rounded-xl bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name="library" size={27} /></span>
-          <h2 className="font-display mt-5 text-xl">No resources added</h2>
-        </div>
+      <PageHeader eyebrow="Clinical records" title="EHR Library" subtitle="Search and open the latest patient records in this hospital." />
+      <main className="space-y-5 bg-[#f7f9fc] p-5 text-[#12203a] md:p-8">
+        <section className="grid gap-4 sm:grid-cols-3">
+          {[
+            { label: "Patient records", value: records.length, icon: "library" as IconName, style: "bg-[#eaf0ff] text-[#3064ed]" },
+            { label: "Pending review", value: pending, icon: "activity" as IconName, style: "bg-[#fff1df] text-[#f27a16]" },
+            { label: "Approved", value: approved, icon: "shield" as IconName, style: "bg-[#e4f6f3] text-[#0b9b91]" },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-4 rounded-2xl border border-[#dce3ec] bg-white p-5 shadow-[0_8px_24px_rgba(24,43,76,.05)]">
+              <span className={`grid h-12 w-12 place-items-center rounded-xl ${item.style}`}><Icon name={item.icon} size={22} /></span>
+              <div><p className="text-sm text-[#66738d]">{item.label}</p><p className="mt-1 text-2xl font-semibold text-[#111a2d]">{item.value}</p></div>
+            </div>
+          ))}
+        </section>
+        <section className="overflow-hidden rounded-2xl border border-[#dce3ec] bg-white shadow-[0_8px_24px_rgba(24,43,76,.06)]">
+          <div className="flex flex-col gap-4 border-b border-[#e1e6ee] p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div><h2 className="text-lg font-semibold text-[#111a2d]">Clinical records</h2><p className="mt-1 text-xs text-[#748198]">Live records from {workspace.organization.name}.</p></div>
+            <label className="relative block sm:w-80">
+              <span className="sr-only">Search EHR records</span>
+              <Icon name="search" size={16} className="absolute left-3 top-3 text-[#7d899d]" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search name, patient ID, or subject..." className="focus-ring h-10 w-full rounded-lg border border-[#d9e0ea] bg-white pl-9 pr-3 text-sm text-[#26334a] placeholder:text-[#8a95a8]" />
+            </label>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[820px] text-left text-xs">
+              <thead className="border-b border-[#e3e8ef] bg-[#f8fafd] text-[10px] uppercase tracking-[.08em] text-[#64728a]">
+                <tr><th className="w-12 px-4 py-3" /><th className="px-3 py-3">Patient</th><th className="px-3 py-3">Patient ID</th><th className="px-3 py-3">Age</th><th className="px-3 py-3">Latest clinical subject</th><th className="px-3 py-3">Status</th><th className="px-3 py-3">Last visit</th></tr>
+              </thead>
+              <tbody className="divide-y divide-[#e6eaf0]">
+                {filtered.map((record) => (
+                  <tr key={record.id} className="text-[#26334a] hover:bg-[#f8fafd]">
+                    <td className="px-4 py-4"><button onClick={() => router.push(`${workspace.workspace_path}/patient/${record.id}`)} className="focus-ring rounded-md p-1 text-[#718099] hover:text-[#315fdd]" aria-label={`Open ${record.patient_name}`}><Icon name="chevron" size={15} /></button></td>
+                    <td className="px-3 py-4 font-semibold text-[#1d2940]">{record.patient_name}</td>
+                    <td className="px-3 py-4 text-[#64728a]">{record.patient_reference}</td>
+                    <td className="px-3 py-4">{record.age ?? "—"}</td>
+                    <td className="max-w-sm px-3 py-4 text-[#59677f]"><p className="line-clamp-2">{record.subject}</p></td>
+                    <td className="px-3 py-4"><StatusPill status={record.status} /></td>
+                    <td className="whitespace-nowrap px-3 py-4 text-[#64728a]">{record.last_visit_at ? new Date(record.last_visit_at).toLocaleDateString() : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {loading && <p className="p-10 text-center text-sm text-[#748198]">Loading clinical records…</p>}
+          {!loading && !filtered.length && <p className="p-10 text-center text-sm text-[#748198]">No clinical records match this search.</p>}
+          <div className="border-t border-[#e1e6ee] px-5 py-4 text-xs text-[#718099]">Showing {filtered.length} of {records.length} records</div>
+        </section>
       </main>
     </>
   );
@@ -1217,13 +1283,10 @@ function LibraryPage() {
 function AuditTrailPage() {
   const [data, setData] = useState<AuditEventList>({ events: [], total: 0 });
   const [search, setSearch] = useState("");
+  const [action, setAction] = useState("");
   const [outcome, setOutcome] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const canonicalCounts = useMemo(
-    () => Object.fromEntries(REQUIRED_AUDIT_EVENT_IDS.map((id) => [id, data.events.filter((event) => event.action === id).length])),
-    [data.events],
-  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1232,6 +1295,7 @@ function AuditTrailPage() {
       await flushAuditQueue();
       const params = new URLSearchParams({ limit: "300" });
       if (search.trim()) params.set("search", search.trim());
+      if (action) params.set("action", action);
       if (outcome) params.set("outcome", outcome);
       setData(await apiFetch<AuditEventList>(`/audit/events?${params.toString()}`));
     } catch (reason) {
@@ -1239,7 +1303,7 @@ function AuditTrailPage() {
     } finally {
       setLoading(false);
     }
-  }, [outcome, search]);
+  }, [action, outcome, search]);
 
   useEffect(() => {
     const handle = window.setTimeout(() => void load(), 250);
@@ -1254,32 +1318,21 @@ function AuditTrailPage() {
         subtitle="Who did what, when, for which patient or encounter, and what changed."
         action={<button onClick={() => void load()} className={buttonSecondary}><Icon name="refresh" size={14} /> Refresh</button>}
       />
-      <main className="space-y-5 p-5 md:p-8">
-        <section className="rounded-xl border bg-[var(--ink-elevated)] p-5">
-          <h2 className="font-display font-semibold">Tracked events</h2>
-          <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {REQUIRED_AUDIT_EVENT_IDS.map((eventId) => (
-              <button
-                type="button"
-                key={eventId}
-                onClick={() => setSearch(eventId)}
-                className="focus-ring flex items-center justify-between rounded-lg border bg-[var(--ink)] px-3 py-2.5 text-left hover:border-[var(--teal)]/50"
-              >
-                <span>
-                  <span className="block text-xs font-medium">{AUDIT_EVENT_LABELS[eventId]}</span>
-                </span>
-                <span className="ml-3 rounded-full bg-[var(--teal-soft)] px-2 py-1 font-mono text-[10px] text-[var(--teal)]">{canonicalCounts[eventId] || 0}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-        <section className="grid gap-3 rounded-xl border bg-[var(--ink-elevated)] p-4 md:grid-cols-[1fr_220px_auto]">
+      <main className="space-y-5 bg-[#f7f9fc] p-5 text-[#12203a] md:p-8">
+        <section className="grid gap-3 rounded-2xl border border-[#dce3ec] bg-white p-4 shadow-[0_8px_24px_rgba(24,43,76,.05)] md:grid-cols-[minmax(240px,1fr)_minmax(220px,300px)_180px_auto]">
           <label>
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-[var(--faint)]">Search actor, patient, action</span>
             <div className="relative">
               <Icon name="search" size={14} className="absolute left-3 top-3 text-[var(--faint)]" />
               <input value={search} onChange={(event) => setSearch(event.target.value)} className={`${inputClass} pl-9`} placeholder="Search audit events…" />
             </div>
+          </label>
+          <label>
+            <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-[#68758c]">Tracked event</span>
+            <select value={action} onChange={(event) => setAction(event.target.value)} className="focus-ring h-10 w-full rounded-lg border border-[#d9e0ea] bg-white px-3 text-sm text-[#26334a]">
+              <option value="">All tracked events</option>
+              {REQUIRED_AUDIT_EVENT_IDS.map((eventId) => <option key={eventId} value={eventId}>{AUDIT_EVENT_LABELS[eventId]}</option>)}
+            </select>
           </label>
           <label>
             <span className="mb-2 block text-[10px] font-semibold uppercase tracking-wide text-[var(--faint)]">Outcome</span>
@@ -1296,10 +1349,14 @@ function AuditTrailPage() {
           </div>
         </section>
         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
-        <section className="overflow-hidden rounded-xl border bg-[var(--ink-elevated)]">
+        <section className="overflow-hidden rounded-2xl border border-[#dce3ec] bg-white shadow-[0_8px_24px_rgba(24,43,76,.06)]">
+          <div className="flex items-center justify-between border-b border-[#e1e6ee] px-5 py-4">
+            <div><h2 className="text-lg font-semibold text-[#111a2d]">Audit events</h2><p className="mt-1 text-xs text-[#748198]">Recorded activity across this hospital workspace.</p></div>
+            <span className="rounded-lg bg-[#e5f6f3] px-3 py-2 text-xs font-semibold text-[#078b80]">{data.total} events</span>
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-left text-xs">
-              <thead className="border-b bg-[var(--ink)] text-[var(--faint)]">
+              <thead className="border-b border-[#e3e8ef] bg-[#f8fafd] text-[10px] uppercase tracking-[.08em] text-[#64728a]">
                 <tr>
                   <th className="px-4 py-3 font-semibold">When</th>
                   <th className="px-4 py-3 font-semibold">Who</th>
@@ -1309,18 +1366,18 @@ function AuditTrailPage() {
                   <th className="px-4 py-3 font-semibold">What changed / context</th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody className="divide-y divide-[#e6eaf0]">
                 {data.events.map((event) => (
-                  <tr key={event.id} className="align-top hover:bg-[var(--ink-panel)]">
-                    <td className="whitespace-nowrap px-4 py-4 text-[var(--muted)]">
+                  <tr key={event.id} className="align-top text-[#26334a] hover:bg-[#f8fafd]">
+                    <td className="whitespace-nowrap px-4 py-4 text-[#64728a]">
                       {new Date(event.occurred_at).toLocaleString()}
                     </td>
                     <td className="px-4 py-4">
-                      <p className="font-medium">{event.actor_name === "System service" ? "Automated" : event.actor_name}</p>
-                      <p className="mt-1 capitalize text-[var(--faint)]">{event.actor_role === "worker" || !event.actor_role ? "Automated" : event.actor_role.replaceAll("_", " ")}</p>
+                      <p className="font-semibold text-[#1d2940]">{event.actor_name === "System service" ? "Automated" : event.actor_name}</p>
+                      <p className="mt-1 capitalize text-[#7f8ba0]">{event.actor_role === "worker" || !event.actor_role ? "Automated" : event.actor_role.replaceAll("_", " ")}</p>
                     </td>
                     <td className="px-4 py-4">
-                      <span className="font-medium text-[var(--teal)]">{AUDIT_EVENT_LABELS[event.action] || event.action.replaceAll(".", " ")}</span>
+                      <span className="font-medium text-[#4c33c9]">{AUDIT_EVENT_LABELS[event.action] || event.action.replaceAll(".", " ")}</span>
                     </td>
                     <td className="px-4 py-4">
                       <p>{event.patient_name || "—"}</p>
@@ -1465,7 +1522,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
         {tab === "ward-voice" && <WardVoice />}
         {tab === "users" && <UsersPage />}
         {tab === "network" && <NetworkPage />}
-        {tab === "library" && <LibraryPage />}
+        {tab === "library" && <LibraryPage workspace={workspace} records={records} loading={recordsLoading} />}
         {tab === "audit" && <AuditTrailPage />}
         {tab === "settings" && <SettingsPage workspace={workspace} />}
       </div>
