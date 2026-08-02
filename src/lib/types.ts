@@ -59,6 +59,21 @@ export type PatientDashboardRecord = {
   created_at: string;
   last_visit_at: string | null;
   approval_percentage?: number;
+  visits: PatientVisit[];
+};
+
+export type PatientVisit = {
+  id: string;
+  visit_number: number;
+  encounter_number: string | null;
+  department: string | null;
+  ward_number: string | null;
+  bed_number: string | null;
+  status: string;
+  doctor_name: string;
+  summary: string;
+  record_count: number;
+  created_at: string;
 };
 
 export type StructuredNote = {
@@ -173,6 +188,8 @@ export type PatientChart = {
   handovers: HandoverSummary[];
   section_reviews: PatientSectionReview[];
   approval_percentage: number;
+  visits: PatientVisit[];
+  selected_visit: PatientVisit | null;
 };
 
 export type PatientSectionReview = {

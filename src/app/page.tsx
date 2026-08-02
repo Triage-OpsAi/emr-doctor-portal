@@ -46,82 +46,105 @@ const workflow = [
 function Brand() {
   return (
     <span className="flex items-center gap-3">
-      <TriCareLogo size={36} className="shadow-[0_8px_24px_rgba(43,175,158,.22)]" />
+      <TriCareLogo size={38} className="shadow-[0_8px_24px_rgba(43,175,158,.22)]" />
       <span>
-        <span className="block font-display text-[15px] font-semibold leading-none">Tri-Care</span>
+        <span className="block text-[16px] font-black uppercase leading-none tracking-[.04em]">Tri-Care</span>
         <span className="mt-1 block font-mono text-[8px] uppercase tracking-[.18em] text-[var(--faint)]">Clinical workspace</span>
       </span>
     </span>
   );
 }
 
-function DashboardPreview() {
+const waveform = [22, 38, 54, 30, 70, 42, 82, 50, 34, 66, 92, 48, 76, 40, 58, 28, 64, 88, 44, 72, 36, 55, 24, 46, 32, 18];
+
+function VoiceWave({ compact = false }: { compact?: boolean }) {
   return (
-    <div className="relative mx-auto w-full max-w-[620px]">
-      <div className="absolute -inset-8 rounded-[40px] bg-[radial-gradient(circle,rgba(43,175,158,.18),transparent_68%)] blur-2xl" />
-      <div className="relative overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--ink-elevated)] shadow-[0_30px_90px_var(--shadow)]">
-        <div className="flex h-12 items-center justify-between border-b px-4">
-          <div className="flex items-center gap-2">
-            <TriCareLogo size={24} className="rounded-lg" />
-            <span className="text-[10px] font-semibold">Clinical workspace</span>
-          </div>
-          <div className="flex gap-1.5" aria-hidden="true">
-            <span className="h-2 w-2 rounded-full bg-[var(--faint)]/40" />
-            <span className="h-2 w-2 rounded-full bg-[var(--faint)]/40" />
-            <span className="h-2 w-2 rounded-full bg-[var(--teal)]" />
+    <div className={`flex items-center gap-[3px] ${compact ? "h-10" : "h-16"}`} aria-hidden="true">
+      {waveform.map((height, index) => (
+        <span
+          key={index}
+          className="landing-wave-bar w-[2px] rounded-full bg-[var(--teal)] opacity-80 shadow-[0_0_8px_rgba(43,175,158,.35)]"
+          style={{ height: `${compact ? Math.max(5, height * 0.42) : height * 0.58}%`, animationDelay: `${index * -45}ms` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ProductPreview() {
+  return (
+    <div className="relative mx-auto min-h-[520px] w-full max-w-[760px] lg:min-h-[590px]">
+      <div className="absolute inset-[8%_4%_2%_0] rounded-full bg-[radial-gradient(circle,rgba(43,175,158,.2),transparent_68%)] blur-3xl" />
+
+      <div className="absolute left-0 top-[5%] w-[88%] rotate-[-3deg] rounded-[24px] border border-[var(--preview-edge)] bg-[var(--preview-shell)] p-[9px] shadow-[0_45px_100px_var(--shadow)] sm:p-[12px]">
+        <div className="overflow-hidden rounded-[15px] border border-[var(--preview-border)] bg-[var(--preview-screen)] text-[var(--preview-text)]">
+          <div className="grid min-h-[390px] grid-cols-[92px_1fr] sm:min-h-[470px] sm:grid-cols-[138px_1fr]">
+            <aside className="border-r border-[var(--preview-border)] p-3 sm:p-4">
+              <div className="mb-7 flex items-center gap-2">
+                <TriCareLogo size={25} className="rounded-md" />
+                <div className="hidden sm:block"><p className="text-[10px] font-bold">Tri-Care</p><p className="font-mono text-[5px] uppercase tracking-[.18em] text-[var(--preview-muted)]">Clinical workspace</p></div>
+              </div>
+              {([['home', 'Home'], ['users', 'Patients'], ['file', 'EHR'], ['shield', 'Audit']] as Array<[IconName, string]>).map(([icon, item], index) => (
+                <div key={item} className={`mb-2 flex h-10 items-center gap-2 rounded-lg px-3 ${index === 0 ? "bg-[var(--preview-teal-soft)] text-[var(--teal)]" : "text-[var(--preview-muted)]"}`}>
+                  <Icon name={icon} size={13} />
+                  <span className="hidden text-[8px] sm:block">{item}</span>
+                </div>
+              ))}
+            </aside>
+
+            <div className="p-4 sm:p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <p className="font-mono text-[8px] uppercase tracking-[.15em] text-[var(--teal)]">Voice dictation</p>
+                <span className="rounded-lg border border-[var(--preview-border)] px-3 py-2 text-[8px]">◎&nbsp; Hindi⌄</span>
+              </div>
+              <div className="rounded-xl border border-[var(--preview-border)] bg-[var(--preview-panel)] p-4 sm:p-5">
+                <div className="flex items-center justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[11px] font-semibold">Listening…</p>
+                    <VoiceWave />
+                  </div>
+                  <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full border border-[var(--teal)] bg-[var(--preview-teal-soft)] text-[var(--teal)] shadow-[0_0_24px_rgba(43,175,158,.25)]"><Icon name="mic" size={25} /></span>
+                </div>
+                <div className="mt-2 border-t border-[var(--preview-border)] pt-3">
+                  <div className="flex justify-between gap-2"><p className="text-[8px] font-semibold text-[var(--teal)]">Doctor dictation in Hindi</p><span className="text-[7px] text-[var(--preview-muted)]">00:24</span></div>
+                  <p className="mt-2 text-[9px] leading-4">रोगी को हल्का बुखार और सिरदर्द है।<br />पैरासिटामोल 650 मि.ग्रा. SOS दें।</p>
+                  <p className="mt-2 flex items-center gap-1 text-[7px] text-[var(--teal)]"><Icon name="shield" size={10} /> Captured securely</p>
+                </div>
+              </div>
+              <div className="mt-4 rounded-xl border border-[var(--preview-border)] bg-[var(--preview-panel)] p-4">
+                <p className="font-mono text-[7px] uppercase tracking-[.15em] text-[var(--teal)]">Structured patient record</p>
+                <div className="mt-3 grid grid-cols-[1fr_72px] gap-3">
+                  <div className="overflow-hidden rounded-lg border border-[var(--preview-border)] text-[8px]">
+                    {[["Chief Complaint", "हल्का बुखार और सिरदर्द"], ["Assessment", "संभावित वायरल फीवर"], ["Medication", "पैरासिटामोल 650 मि.ग्रा."], ["Advice", "पर्याप्त पानी पिएं"]].map(([label, value]) => <div key={label} className="grid grid-cols-[.8fr_1.2fr] border-b border-[var(--preview-border)] px-2 py-2 last:border-0"><span className="text-[var(--preview-muted)]">{label}</span><span>{value}</span></div>)}
+                  </div>
+                  <div className="grid place-items-center rounded-lg border border-[var(--preview-border)] text-[var(--preview-muted)]"><Icon name="file" size={28} /></div>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-        <div className="grid min-h-[360px] grid-cols-[70px_1fr] sm:grid-cols-[148px_1fr]">
-          <aside className="border-r p-3">
-            <div className="mb-6 h-8 rounded-lg bg-[var(--teal-soft)]" />
-            {["Home", "Patients", "EHR", "Audit"].map((item, index) => (
-              <div key={item} className={`mb-2 flex h-8 items-center gap-2 rounded-lg px-2 ${index === 0 ? "bg-[var(--teal-soft)] text-[var(--teal)]" : "text-[var(--faint)]"}`}>
-                <span className={`h-2 w-2 rounded-full ${index === 0 ? "bg-[var(--teal)]" : "bg-[var(--border)]"}`} />
-                <span className="hidden text-[9px] sm:block">{item}</span>
-              </div>
-            ))}
-          </aside>
-          <div className="p-4 sm:p-6">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-mono text-[8px] uppercase tracking-[.15em] text-[var(--teal)]">Patient operations</p>
-                <p className="mt-1 font-display text-lg font-semibold">Good day, Dr. Mehta</p>
-              </div>
-              <span className="grid h-8 w-8 place-items-center rounded-lg bg-[var(--teal)] text-[var(--ink-elevated)]"><Icon name="mic" size={15} /></span>
-            </div>
-            <div className="mt-5 grid grid-cols-3 gap-2">
-              {[["24", "Patients"], ["18", "Reviewed"], ["06", "Pending"]].map(([value, label]) => (
-                <div key={label} className="rounded-xl border bg-[var(--ink)] p-3">
-                  <p className="font-display text-lg">{value}</p>
-                  <p className="mt-1 text-[8px] text-[var(--faint)]">{label}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-4 overflow-hidden rounded-xl border bg-[var(--ink)]">
-              <div className="flex items-center justify-between border-b p-3">
-                <p className="text-[10px] font-semibold">Patient records</p>
-                <span className="h-6 w-20 rounded-md border" />
-              </div>
-              {[
-                ["Anaya Rao", "MH-1042", "Reviewed"],
-                ["Rohan Shah", "MH-1041", "Pending"],
-                ["Mira Nair", "MH-1040", "Reviewed"],
-              ].map(([name, id, status]) => (
-                <div key={id} className="grid grid-cols-[1fr_auto] items-center gap-3 border-b p-3 last:border-0">
-                  <div>
-                    <p className="text-[9px] font-medium">{name}</p>
-                    <p className="mt-1 font-mono text-[7px] text-[var(--faint)]">{id}</p>
-                  </div>
-                  <span className={`rounded-full px-2 py-1 text-[7px] ${status === "Reviewed" ? "bg-[var(--teal-soft)] text-[var(--teal)]" : "bg-amber-500/10 text-amber-500"}`}>{status}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+        <div className="absolute -bottom-4 left-[8%] h-4 w-[98%] rounded-b-2xl bg-[var(--preview-shell)] shadow-xl" />
+      </div>
+
+      <div className="absolute bottom-[2%] right-0 z-20 w-[34%] min-w-[178px] rotate-[2deg] rounded-[30px] border-[5px] border-[var(--preview-shell)] bg-[var(--preview-screen)] p-3 text-[var(--preview-text)] shadow-[0_28px_70px_var(--shadow)] sm:border-[7px] sm:p-4">
+        <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-[var(--preview-border)]" />
+        <div className="flex items-center gap-2 border-b border-[var(--preview-border)] pb-3"><TriCareLogo size={23} className="rounded-md" /><div><p className="text-[9px] font-bold">Tri-Care</p><p className="font-mono text-[5px] uppercase text-[var(--preview-muted)]">Clinical workspace</p></div></div>
+        <p className="mt-3 text-[8px] font-semibold text-[var(--teal)]">Voice dictation</p>
+        <p className="mt-1 text-[9px] font-semibold">Listening…</p>
+        <VoiceWave compact />
+        <div className="rounded-lg border border-[var(--preview-border)] p-2">
+          <p className="text-[7px] font-semibold text-[var(--teal)]">Doctor dictation in Hindi</p>
+          <p className="mt-2 text-[7px] leading-3">रोगी को हल्का बुखार है।<br />650 मि.ग्रा. SOS दें।</p>
+        </div>
+        <div className="mt-3 rounded-lg border border-[var(--preview-border)] p-2">
+          <p className="font-mono text-[6px] uppercase text-[var(--teal)]">Structured patient record</p>
+          <p className="mt-2 text-[7px] text-[var(--preview-muted)]">Chief Complaint</p><p className="text-[7px]">हल्का बुखार और सिरदर्द</p>
         </div>
       </div>
-      <div className="absolute -bottom-5 -left-3 hidden items-center gap-3 rounded-2xl border bg-[var(--ink-elevated)] px-4 py-3 shadow-xl sm:flex">
-        <span className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--teal-soft)] text-[var(--teal)]"><Icon name="shield" size={16} /></span>
-        <span><span className="block text-[10px] font-semibold">Review stays human</span><span className="mt-0.5 block text-[8px] text-[var(--faint)]">Structured for clinical verification</span></span>
+
+      <div className="absolute bottom-0 right-[22%] z-30 hidden w-36 rounded-xl border border-[var(--preview-border)] bg-[var(--preview-panel)] p-3 text-[8px] text-[var(--preview-text)] shadow-2xl sm:block">
+        <p className="mb-2 text-[var(--teal)]">✓ Hindi</p>
+        {[["தமிழ்", "Tamil"], ["తెలుగు", "Telugu"], ["ಕನ್ನಡ", "Kannada"], ["मराठी", "Marathi"]].map(([native, label]) => <p key={label} className="flex justify-between py-1"><span>{native}</span><span className="text-[var(--preview-muted)]">{label}</span></p>)}
       </div>
     </div>
   );
@@ -132,8 +155,8 @@ export default function Home() {
 
   return (
     <main className="min-h-screen overflow-hidden bg-[var(--ink)] text-[var(--text)]">
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-[var(--border)]/80 bg-[var(--ink)]/90 backdrop-blur-xl">
-        <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between px-5 sm:px-8 lg:px-10">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-[var(--border)]/70 bg-[var(--ink)]/88 backdrop-blur-xl">
+        <div className="mx-auto flex h-[76px] max-w-[1500px] items-center justify-between px-5 sm:px-8 lg:px-12">
           <Link href="/" aria-label="Tri-Care home"><Brand /></Link>
           <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary navigation">
             {navigation.map(([label, href]) => <a key={href} href={href} className="focus-ring rounded text-xs font-medium text-[var(--muted)] transition hover:text-[var(--text)]">{label}</a>)}
@@ -141,8 +164,8 @@ export default function Home() {
           </nav>
           <div className="hidden items-center gap-4 lg:flex">
             <ThemeToggle />
-            <Link href="/login" className="focus-ring inline-flex h-10 items-center gap-2 rounded-xl bg-[var(--teal)] px-5 text-xs font-semibold text-[#07110f] transition hover:-translate-y-0.5 hover:brightness-105">
-              Access platform <Icon name="chevron" size={14} />
+            <Link href="/login" className="focus-ring inline-flex h-10 items-center gap-2 rounded-full bg-[var(--teal)] px-5 text-xs font-bold text-[#07110f] transition hover:-translate-y-0.5 hover:brightness-105">
+              Open workspace <Icon name="chevron" size={14} />
             </Link>
           </div>
           <div className="flex items-center gap-3 lg:hidden">
@@ -162,32 +185,40 @@ export default function Home() {
         )}
       </header>
 
-      <section className="relative mx-auto grid min-h-[760px] max-w-7xl items-center gap-16 px-5 pb-24 pt-36 sm:px-8 lg:grid-cols-[.92fr_1.08fr] lg:px-10 lg:pt-32">
-        <div className="pointer-events-none absolute left-[-16rem] top-20 h-[34rem] w-[34rem] rounded-full bg-[var(--teal)]/10 blur-[120px]" />
-        <div className="relative z-10 max-w-2xl">
-          <span className="inline-flex items-center gap-2 rounded-full border bg-[var(--ink-elevated)] px-3 py-2 font-mono text-[9px] uppercase tracking-[.16em] text-[var(--teal)]">
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--teal)] shadow-[0_0_0_4px_var(--teal-soft)]" />
-            Built for focused clinical work
-          </span>
-          <h1 className="mt-7 font-display text-[clamp(3rem,7vw,5.9rem)] leading-[.98] tracking-[-.045em]">
-            Patient context,<br /><span className="text-[var(--teal)]">ready for care.</span>
-          </h1>
-          <p className="mt-7 max-w-xl text-base leading-7 text-[var(--muted)] sm:text-lg sm:leading-8">
-            Tri-Care brings voice intake, structured clinical records, reports and care coordination into one secure workspace for hospital teams.
+      <section className="landing-hero relative mx-auto grid min-h-[820px] max-w-[1500px] items-center gap-12 px-5 pb-20 pt-32 sm:px-8 lg:grid-cols-[.82fr_1.18fr] lg:px-12 lg:pb-24 lg:pt-28">
+        <div className="pointer-events-none absolute left-[-18rem] top-16 h-[38rem] w-[38rem] rounded-full bg-[var(--teal)]/10 blur-[130px]" />
+        <div className="pointer-events-none absolute right-[-8rem] top-0 h-[32rem] w-[32rem] bg-[linear-gradient(rgba(43,175,158,.08)_1px,transparent_1px),linear-gradient(90deg,rgba(43,175,158,.08)_1px,transparent_1px)] bg-[size:52px_52px] [mask-image:linear-gradient(to_bottom,black,transparent)]" />
+        <div className="relative z-10 max-w-[620px]">
+          <p className="text-[clamp(3.5rem,7vw,7rem)] font-black uppercase leading-[.82] tracking-[-.07em] text-[var(--hero-white)] drop-shadow-[0_8px_24px_rgba(43,175,158,.18)]">
+            Now <span className="bg-[linear-gradient(180deg,#46d7ca,#149c94)] bg-clip-text text-transparent">Live</span>
           </p>
-          <div className="mt-9 flex flex-col gap-3 sm:flex-row">
-            <Link href="/login" className="focus-ring inline-flex h-13 items-center justify-center gap-2 rounded-xl bg-[var(--teal)] px-6 py-4 text-sm font-semibold text-[#07110f] transition hover:-translate-y-0.5 hover:brightness-105">
-              Sign in securely <Icon name="chevron" size={15} />
+          <div className="mt-4 h-px w-full max-w-[510px] bg-[linear-gradient(90deg,transparent,var(--teal),transparent)] shadow-[0_0_16px_var(--teal)]" />
+          <h1 className="mt-7 text-[clamp(2rem,4vw,3.55rem)] font-bold leading-[1.06] tracking-[-.045em]">
+            Healthcare that <span className="text-[var(--teal)]">listens.</span>
+          </h1>
+
+          <div className="mt-7 flex max-w-[510px] items-center gap-3">
+            <div className="h-px flex-1 bg-[linear-gradient(90deg,transparent,var(--teal))]" />
+            <span className="grid h-16 w-16 shrink-0 place-items-center rounded-full border border-[var(--teal)] bg-[var(--teal-soft)] text-[var(--teal)] shadow-[0_0_30px_rgba(43,175,158,.28)]"><Icon name="mic" size={27} /></span>
+            <div className="h-px flex-1 bg-[linear-gradient(90deg,var(--teal),transparent)]" />
+          </div>
+
+          <p className="mt-7 text-[clamp(1.35rem,2.3vw,2rem)] font-semibold leading-snug">Voice-first patient records<br /><span className="text-[var(--teal)]">in Indian languages</span></p>
+          <span className="mt-5 inline-flex items-center gap-3 rounded-full border border-[var(--teal)] px-5 py-2.5 text-sm font-semibold text-[var(--teal)]"><span className="text-lg">◎</span> Web + Mobile</span>
+
+          <p className="mt-7 border-t border-[var(--border)] pt-5 text-lg font-medium">Less paperwork. <span className="text-[var(--teal)]">More patient care.</span></p>
+          <p className="mt-4 max-w-lg text-sm leading-6 text-[var(--muted)]">Capture consultations, structure the patient record, review clinical history and coordinate care from one secure workspace.</p>
+
+          <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+            <Link href="/login" className="focus-ring inline-flex h-13 items-center justify-center gap-2 rounded-xl bg-[var(--teal)] px-7 py-4 text-sm font-bold text-[#07110f] shadow-[0_12px_34px_rgba(43,175,158,.2)] transition hover:-translate-y-0.5 hover:brightness-105">
+              Access Tri-Care <Icon name="chevron" size={15} />
             </Link>
-            <a href="#product" className="focus-ring inline-flex h-13 items-center justify-center gap-2 rounded-xl border bg-[var(--ink-elevated)] px-6 py-4 text-sm font-semibold transition hover:border-[var(--teal)]/50">
-              See the clinical workflow <Icon name="activity" size={15} />
+            <a href="#workflow" className="focus-ring inline-flex h-13 items-center justify-center gap-2 rounded-xl border bg-[var(--ink-elevated)] px-6 py-4 text-sm font-semibold transition hover:border-[var(--teal)]/50">
+              See how it works <Icon name="activity" size={15} />
             </a>
           </div>
-          <div className="mt-8 flex flex-wrap gap-x-6 gap-y-3 text-[11px] text-[var(--faint)]">
-            {["Role-aware access", "Auditable activity", "Human clinical review"].map((item) => <span key={item} className="flex items-center gap-2"><Icon name="shield" size={13} className="text-[var(--teal)]" />{item}</span>)}
-          </div>
         </div>
-        <div className="relative z-10"><DashboardPreview /></div>
+        <div className="relative z-10"><ProductPreview /></div>
       </section>
 
       <section className="border-y bg-[var(--ink-elevated)]">

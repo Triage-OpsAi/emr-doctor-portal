@@ -23,6 +23,7 @@ import type {
   NetworkHospital,
   PatientChart,
   PatientDashboardRecord,
+  PatientVisit,
   ReportUpload,
   RecordDetail,
   VoiceIntakeResult,
@@ -169,7 +170,7 @@ function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: (
   );
 }
 
-export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose: () => void; onQueued: () => void; patientId?: string }) {
+export function VoiceEncounterModal({ onClose, onQueued, patientId, encounterId }: { onClose: () => void; onQueued: () => void; patientId?: string; encounterId?: string }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [audio, setAudio] = useState<Blob | null>(null);
@@ -272,6 +273,7 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId }: { onClose:
           language_code: "unknown",
           department: null,
           patient_id: patientId || null,
+          encounter_id: encounterId || null,
         }),
       });
       setUploadStage("Saving recording…");
@@ -759,6 +761,7 @@ function Dashboard({
   const [notice, setNotice] = useState("");
   const [patientSearch, setPatientSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [creatingVisitFor, setCreatingVisitFor] = useState("");
   const approved = records.filter((record) => record.status === "approved").length;
   const pending = records.filter((record) => record.status === "pending_review").length;
   const jobsByPatient = new Map(
@@ -793,6 +796,7 @@ function Dashboard({
       status: job.status === "failed" ? "needs_attention" : "registering_patient",
       created_at: job.created_at,
       last_visit_at: null,
+      visits: [],
     }));
   const displayedRecords = [...provisionalPatients, ...registeredPatients].map(
     (record, index) => ({ ...record, serial_number: index + 1 }),
@@ -814,6 +818,30 @@ function Dashboard({
   const updatedLabel = (value: string | null) => {
     if (!value) return "Not updated";
     return new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  };
+  const openVisit = (patientId: string, visitId?: string) => {
+    const query = visitId ? `?visit=${encodeURIComponent(visitId)}` : "";
+    router.push(`${workspace.workspace_path}/patient/${patientId}${query}`);
+  };
+  const createVisit = async (patientId: string) => {
+    setCreatingVisitFor(patientId);
+    setNotice("");
+    try {
+      const visit = await apiFetch<PatientVisit>(`/patients/${patientId}/visits`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      refresh();
+      openVisit(patientId, visit.id);
+    } catch (reason) {
+      setNotice(reason instanceof Error ? reason.message : "Unable to create the new visit.");
+    } finally {
+      setCreatingVisitFor("");
+    }
+  };
+  const chooseVisit = (patientId: string, value: string) => {
+    if (value === "new") void createVisit(patientId);
+    else if (value) openVisit(patientId, value);
   };
   const statusStyle = (status: string) => status === "approved"
     ? "bg-[#def6ef] text-[#078777]"
@@ -911,10 +939,10 @@ function Dashboard({
               <button onClick={refresh} className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-[#d9e0ea] bg-white px-4 text-sm font-medium text-[#344158] hover:bg-[#f7f9fc]"><Icon name="refresh" size={15} /> Refresh</button>
             </div>
           </div>
-          {error && <p className="m-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
+          {(error || notice) && <p className="m-5 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error || notice}</p>}
           <div className="divide-y divide-[#e6eaf0] md:hidden">
             {loading ? <p className="p-8 text-center text-sm text-[#748198]">Loading patient records…</p> : filteredRecords.length === 0 ? <p className="p-8 text-center text-sm text-[#748198]">No matching patients</p> : filteredRecords.map((record) => (
-              <button key={record.id} disabled={record.id.startsWith("job-")} onClick={() => router.push(`${workspace.workspace_path}/patient/${record.id}`)} className="focus-ring block w-full p-4 text-left transition hover:bg-[#f8fafd] disabled:cursor-default">
+              <div key={record.id} className="p-4 transition hover:bg-[#f8fafd]">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-[#1d2940]">{record.patient_name}</p>
@@ -923,8 +951,13 @@ function Dashboard({
                   <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] font-medium ${statusStyle(record.status)}`}>{statusLabel(record.status)}</span>
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm leading-5 text-[#59677f]">{record.subject}</p>
-                <div className="mt-3 flex items-center justify-between text-xs text-[#8792a5]"><span>{updatedLabel(record.last_visit_at || record.created_at)}</span><Icon name="chevron" size={15} /></div>
-              </button>
+                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-[#8792a5]"><span>{updatedLabel(record.last_visit_at || record.created_at)}</span>{!record.id.startsWith("job-") && <button type="button" onClick={() => openVisit(record.id, record.visits[0]?.id)} className="inline-flex items-center gap-1 font-semibold text-[#0c716e]">Open <Icon name="chevron" size={15} /></button>}</div>
+                {!record.id.startsWith("job-") && <select aria-label={`Choose a visit for ${record.patient_name}`} defaultValue="" disabled={creatingVisitFor === record.id} onChange={(event) => chooseVisit(record.id, event.target.value)} className="focus-ring mt-3 h-10 w-full rounded-lg border border-[#d9e0ea] bg-white px-3 text-xs text-[#344158]">
+                  <option value="" disabled>{record.visits.length ? `${record.visits.length} visit${record.visits.length === 1 ? "" : "s"} · choose visit` : "No visits yet"}</option>
+                  {record.visits.map((visit) => <option key={visit.id} value={visit.id}>Visit {visit.visit_number} · {new Date(visit.created_at).toLocaleDateString()}</option>)}
+                  <option value="new">+ Generate new visit</option>
+                </select>}
+              </div>
             ))}
           </div>
           <div className="hidden overflow-x-auto md:block">
@@ -938,19 +971,20 @@ function Dashboard({
                   <th className="px-3 py-3">Age</th>
                   <th className="px-3 py-3">Subject line of EMR</th>
                   <th className="px-3 py-3">Status</th>
+                  <th className="px-3 py-3">Visits</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={7} className="p-10 text-center text-sm text-[var(--muted)]">Loading patient records…</td></tr>
+                  <tr><td colSpan={8} className="p-10 text-center text-sm text-[var(--muted)]">Loading patient records…</td></tr>
                 ) : filteredRecords.length === 0 ? (
-                  <tr><td colSpan={7} className="p-12 text-center"><Icon name="file" size={28} className="mx-auto text-[var(--faint)]" /><p className="mt-3 text-sm">No patients yet</p></td></tr>
+                  <tr><td colSpan={8} className="p-12 text-center"><Icon name="file" size={28} className="mx-auto text-[var(--faint)]" /><p className="mt-3 text-sm">No patients yet</p></td></tr>
                 ) : filteredRecords.map((record) => (
                   <Fragment key={record.id}>
                     <tr className="border-b text-sm hover:bg-[var(--ink-panel)]">
                       <td className="px-4 py-4">
                         {!record.id.startsWith("job-") ? (
-                          <button onClick={() => router.push(`${workspace.workspace_path}/patient/${record.id}`)} className="focus-ring rounded-md p-1 text-[var(--muted)] hover:text-[var(--teal)]" aria-label={`Open ${record.patient_name} patient page`}>
+                          <button onClick={() => openVisit(record.id, record.visits[0]?.id)} className="focus-ring rounded-md p-1 text-[var(--muted)] hover:text-[var(--teal)]" aria-label={`Open ${record.patient_name} patient page`}>
                             <Icon name="chevron" size={15} />
                           </button>
                         ) : record.id.startsWith("job-") ? (
@@ -964,6 +998,13 @@ function Dashboard({
                       <td className="max-w-xs truncate px-3 py-4 text-[var(--muted)]">{record.subject}</td>
                       <td className="px-3 py-4">
                         <span className={`inline-flex rounded-md px-2.5 py-1 text-xs font-medium ${statusStyle(record.status)}`}>{statusLabel(record.status)}</span>
+                      </td>
+                      <td className="px-3 py-4">
+                        {!record.id.startsWith("job-") && <select aria-label={`Choose a visit for ${record.patient_name}`} defaultValue="" disabled={creatingVisitFor === record.id} onChange={(event) => chooseVisit(record.id, event.target.value)} className="focus-ring h-9 min-w-44 rounded-lg border border-[#d9e0ea] bg-white px-2 text-xs text-[#344158]">
+                          <option value="" disabled>{creatingVisitFor === record.id ? "Creating visit…" : `${record.visits.length} visit${record.visits.length === 1 ? "" : "s"}`}</option>
+                          {record.visits.map((visit) => <option key={visit.id} value={visit.id}>Visit {visit.visit_number} · {new Date(visit.created_at).toLocaleDateString()}</option>)}
+                          <option value="new">+ Generate new visit</option>
+                        </select>}
                       </td>
                     </tr>
                   </Fragment>

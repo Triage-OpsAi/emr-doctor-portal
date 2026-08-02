@@ -875,7 +875,7 @@ function EditPatientModal({
   );
 }
 
-export function PatientPage({ clientName, workspaceId, patientId }: { clientName: string; workspaceId: string; patientId: string }) {
+export function PatientPage({ clientName, workspaceId, patientId, visitId }: { clientName: string; workspaceId: string; patientId: string; visitId?: string }) {
   const router = useRouter();
   const chartViewed = useRef(false);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -902,7 +902,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
       const [workspaceData, patients, chartData] = await Promise.all([
         apiFetch<Workspace>("/doctor/workspace"),
         apiFetch<PatientDashboardRecord[]>("/doctor/patients"),
-        apiFetch<PatientChart>(`/patients/${patientId}/chart`),
+        apiFetch<PatientChart>(`/patients/${patientId}/chart${visitId ? `?encounter_id=${encodeURIComponent(visitId)}` : ""}`),
       ]);
       const selected = patients.find((item) => item.id === patientId);
       if (!selected) throw new Error("Patient was not found in this hospital.");
@@ -918,7 +918,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
     } finally {
       setLoading(false);
     }
-  }, [patientId]);
+  }, [patientId, visitId]);
 
   useEffect(() => {
     if (!hasSession()) {
@@ -951,6 +951,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
   }, [encounterQueued, load, patientId]);
 
   const latest = chart?.records[0] || null;
+  const selectedVisit = chart?.selected_visit || null;
   const note = latest?.structured_note || null;
   const activeSectionReview = chart?.section_reviews.find((review) => review.section_key === activeTab);
   const sectionDeleted = Boolean(activeSectionReview?.is_deleted);
@@ -1344,6 +1345,15 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
             <Icon name="chevron" size={13} className="rotate-180" /> Back to patients
           </button>
 
+          {chart.visits.length > 0 && <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[#dfe7e6] bg-white p-3">
+            <span className="text-xs font-semibold text-[#51616b]">Viewing visit</span>
+            <select value={selectedVisit?.id || ""} onChange={(event) => router.push(`${workspacePath}/patient/${patientId}?visit=${encodeURIComponent(event.target.value)}`)} className="focus-ring h-10 min-w-56 rounded-lg border border-[#dfe7e6] bg-white px-3 text-xs text-[#18232f]">
+              {!selectedVisit && <option value="">All visits</option>}
+              {chart.visits.map((visit) => <option key={visit.id} value={visit.id}>Visit {visit.visit_number} · {new Date(visit.created_at).toLocaleString()}</option>)}
+            </select>
+            <button type="button" onClick={() => router.push(`${workspacePath}/patient/${patientId}`)} className={actionButton}>View complete history</button>
+          </div>}
+
           <div className="grid gap-5 xl:grid-cols-[1fr_340px]">
             {/* Primary card ------------------------------------------------ */}
             <div className="overflow-hidden rounded-xl border border-[#dfe7e6] bg-white shadow-[0_6px_24px_rgba(35,58,55,.05)]">
@@ -1361,28 +1371,28 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                       </p>
                       <div className="mt-3 grid gap-x-7 gap-y-1.5 text-xs sm:grid-cols-2 xl:grid-cols-4">
                         <p>
-                          <span className="text-[#9aa7ac]">Visit Number:</span> {patient.encounter_number || latest?.encounter_id.slice(0, 10).toUpperCase() || "—"}
+                          <span className="text-[#9aa7ac]">Visit Number:</span> {selectedVisit ? `Visit ${selectedVisit.visit_number}${selectedVisit.encounter_number ? ` · ${selectedVisit.encounter_number}` : ""}` : patient.encounter_number || latest?.encounter_id.slice(0, 10).toUpperCase() || "—"}
                         </p>
                         <p>
-                          <span className="text-[#9aa7ac]">Visit Date &amp; Time:</span> {patient.last_visit_at ? new Date(patient.last_visit_at).toLocaleString() : "—"}
+                          <span className="text-[#9aa7ac]">Visit Date &amp; Time:</span> {selectedVisit ? new Date(selectedVisit.created_at).toLocaleString() : patient.last_visit_at ? new Date(patient.last_visit_at).toLocaleString() : "—"}
                         </p>
                         <p>
-                          <span className="text-[#9aa7ac]">Care Provider:</span> {patient.doctor_name || workspace.current_user.full_name}
+                          <span className="text-[#9aa7ac]">Care Provider:</span> {selectedVisit?.doctor_name || patient.doctor_name || workspace.current_user.full_name}
                         </p>
                         <p>
-                          <span className="text-[#9aa7ac]">Ward / Bed:</span> {patient.ward_number || "—"} / {patient.bed_number || "—"}
+                          <span className="text-[#9aa7ac]">Ward / Bed:</span> {selectedVisit?.ward_number || patient.ward_number || "—"} / {selectedVisit?.bed_number || patient.bed_number || "—"}
                         </p>
                       </div>
                     </div>
                   </div>
 
                   <div className="flex flex-wrap items-start justify-end gap-2">
-                    <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${latest?.status === "pending_review" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
-                      <span className={`h-2 w-2 rounded-full ${latest?.status === "pending_review" ? "bg-red-500" : "bg-emerald-500"}`} />
-                      {latest?.status === "pending_review" ? "Needs review" : "Approved"}
+                    <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${!latest ? "bg-amber-50 text-amber-700" : latest.status === "pending_review" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
+                      <span className={`h-2 w-2 rounded-full ${!latest ? "bg-amber-500" : latest.status === "pending_review" ? "bg-red-500" : "bg-emerald-500"}`} />
+                      {!latest ? "Awaiting record" : latest.status === "pending_review" ? "Needs review" : "Approved"}
                     </span>
                     <button onClick={() => setAction("voice-encounter")} className={primaryButton}>
-                      <Icon name="plus" size={14} /> New Encounter
+                      <Icon name={selectedVisit && !latest ? "mic" : "plus"} size={14} /> {selectedVisit && !latest ? "Record this visit" : "New Encounter"}
                     </button>
                     <details className="relative">
                       <summary className={`${actionButton} cursor-pointer list-none bg-white`}>
@@ -1716,6 +1726,16 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
                       </tr>
                     </thead>
                     <tbody>
+                      {(selectedVisit ? chart.visits.filter((visit) => visit.id === selectedVisit.id) : chart.visits).filter((visit) => visit.record_count === 0).map((visit) => (
+                        <tr key={visit.id} className="border-b border-[#eef2f1] bg-amber-50/40">
+                          <td className="px-3 py-3">{new Date(visit.created_at).toLocaleString()}</td>
+                          <td className="max-w-lg px-3 py-3"><p className="font-medium">{visit.summary}</p>{visit.department && <p className="mt-1 text-[10px] text-[#9aa7ac]">{visit.department}</p>}</td>
+                          <td className="px-3 py-3 text-[#51616b]">{visit.doctor_name}</td>
+                          <td className="px-3 py-3 uppercase text-amber-700">Awaiting record</td>
+                          <td className="px-3 py-3">—</td>
+                          <td className="px-3 py-3"><button type="button" onClick={() => router.push(`${workspacePath}/patient/${patientId}?visit=${encodeURIComponent(visit.id)}`)} className="font-semibold text-[#0c716e] hover:underline">Open visit</button></td>
+                        </tr>
+                      ))}
                       {chart.records.map((record) => {
                         const itemKey = `encounter-${record.id}`;
                         if (itemDeleted("timeline", itemKey)) return null;
@@ -2143,7 +2163,7 @@ export function PatientPage({ clientName, workspaceId, patientId }: { clientName
 
       {action === "report" && <ReportUploadModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "record" && <AddRecordModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
-      {action === "voice-encounter" && <VoiceEncounterModal patientId={patient.id} onClose={() => setAction(null)} onQueued={() => { setEncounterQueued(true); setActiveTab("timeline"); void load(); }} />}
+      {action === "voice-encounter" && <VoiceEncounterModal patientId={patient.id} encounterId={selectedVisit && !latest ? selectedVisit.id : undefined} onClose={() => setAction(null)} onQueued={() => { setEncounterQueued(true); setActiveTab("timeline"); void load(); }} />}
       {action === "medication" && <AddMedicationModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "discharge" && <DischargeRecordingModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "handover" && <HandoverRecordingModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
