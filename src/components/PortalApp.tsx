@@ -170,7 +170,7 @@ function RecordDetailModal({ recordId, onClose }: { recordId: string; onClose: (
   );
 }
 
-export function VoiceEncounterModal({ onClose, onQueued, patientId, encounterId }: { onClose: () => void; onQueued: () => void; patientId?: string; encounterId?: string }) {
+export function VoiceEncounterModal({ onClose, onQueued, patientId, visitId }: { onClose: () => void; onQueued: () => void; patientId?: string; visitId?: string }) {
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
   const [audio, setAudio] = useState<Blob | null>(null);
@@ -273,7 +273,7 @@ export function VoiceEncounterModal({ onClose, onQueued, patientId, encounterId 
           language_code: "unknown",
           department: null,
           patient_id: patientId || null,
-          encounter_id: encounterId || null,
+          visit_id: visitId || null,
         }),
       });
       setUploadStage("Saving recording…");
@@ -562,7 +562,7 @@ export function AddMedicationModal({ patientId, onClose, onDone }: { patientId: 
   );
 }
 
-export function AddRecordModal({ patientId, onClose, onDone }: { patientId: string; onClose: () => void; onDone: () => void }) {
+export function AddRecordModal({ patientId, visitId, onClose, onDone }: { patientId: string; visitId?: string; onClose: () => void; onDone: () => void }) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -581,6 +581,7 @@ export function AddRecordModal({ patientId, onClose, onDone }: { patientId: stri
           objective: text("objective"),
           assessment: text("assessment"),
           plan: text("plan"),
+          visit_id: visitId || null,
         }),
       });
       onDone();
@@ -592,7 +593,7 @@ export function AddRecordModal({ patientId, onClose, onDone }: { patientId: stri
     }
   }
   return (
-    <Modal title="Add clinical record" subtitle="Create another visit/note under this patient." onClose={onClose} wide>
+    <Modal title="Add clinical encounter" subtitle="Add another encounter within this patient visit." onClose={onClose} wide>
       <form onSubmit={submit} className="grid gap-4 p-6 md:grid-cols-2">
         <label className="text-xs text-[var(--muted)]">Record title<input name="title" required className={`${inputClass} mt-2`} placeholder="Chief complaint / visit purpose" /></label>
         <label className="text-xs text-[var(--muted)]">Department<input name="department" className={`${inputClass} mt-2`} placeholder="e.g. General Medicine" /></label>

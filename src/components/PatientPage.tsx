@@ -902,7 +902,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
       const [workspaceData, patients, chartData] = await Promise.all([
         apiFetch<Workspace>("/doctor/workspace"),
         apiFetch<PatientDashboardRecord[]>("/doctor/patients"),
-        apiFetch<PatientChart>(`/patients/${patientId}/chart${visitId ? `?encounter_id=${encodeURIComponent(visitId)}` : ""}`),
+        apiFetch<PatientChart>(`/patients/${patientId}/chart${visitId ? `?visit_id=${encodeURIComponent(visitId)}` : ""}`),
       ]);
       const selected = patients.find((item) => item.id === patientId);
       if (!selected) throw new Error("Patient was not found in this hospital.");
@@ -1726,7 +1726,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                       </tr>
                     </thead>
                     <tbody>
-                      {(selectedVisit ? chart.visits.filter((visit) => visit.id === selectedVisit.id) : chart.visits).filter((visit) => visit.record_count === 0).map((visit) => (
+                      {(selectedVisit ? chart.visits.filter((visit) => visit.id === selectedVisit.id) : chart.visits).filter((visit) => visit.encounter_count === 0).map((visit) => (
                         <tr key={visit.id} className="border-b border-[#eef2f1] bg-amber-50/40">
                           <td className="px-3 py-3">{new Date(visit.created_at).toLocaleString()}</td>
                           <td className="max-w-lg px-3 py-3"><p className="font-medium">{visit.summary}</p>{visit.department && <p className="mt-1 text-[10px] text-[#9aa7ac]">{visit.department}</p>}</td>
@@ -2162,8 +2162,8 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
       </div>
 
       {action === "report" && <ReportUploadModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
-      {action === "record" && <AddRecordModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
-      {action === "voice-encounter" && <VoiceEncounterModal patientId={patient.id} encounterId={selectedVisit && !latest ? selectedVisit.id : undefined} onClose={() => setAction(null)} onQueued={() => { setEncounterQueued(true); setActiveTab("timeline"); void load(); }} />}
+      {action === "record" && <AddRecordModal patientId={patient.id} visitId={selectedVisit?.id} onClose={() => setAction(null)} onDone={() => void load()} />}
+      {action === "voice-encounter" && <VoiceEncounterModal patientId={patient.id} visitId={selectedVisit?.id} onClose={() => setAction(null)} onQueued={() => { setEncounterQueued(true); setActiveTab("timeline"); void load(); }} />}
       {action === "medication" && <AddMedicationModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "discharge" && <DischargeRecordingModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "handover" && <HandoverRecordingModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}

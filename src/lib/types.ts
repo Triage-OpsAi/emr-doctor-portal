@@ -72,7 +72,7 @@ export type PatientVisit = {
   status: string;
   doctor_name: string;
   summary: string;
-  record_count: number;
+  encounter_count: number;
   created_at: string;
 };
 
