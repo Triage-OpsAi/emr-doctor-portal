@@ -6,7 +6,7 @@ import { ThemeToggle } from "@/components/ThemeProvider";
 import { Icon, IconName } from "@/components/Icon";
 import { WardVoice } from "@/components/WardVoice";
 import { TriCareLogo } from "@/components/TriCareLogo";
-import { apiFetch, clearTokens, hasSession } from "@/lib/api";
+import { apiFetch, clearTokens, hasSession, logoutSession } from "@/lib/api";
 import {
   AUDIT_EVENT_LABELS,
   AUDIT_EVENTS,
@@ -1522,7 +1522,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
   async function logout() {
     queueAuditEvent({ action: AUDIT_EVENTS.USER_LOGOUT, event_category: "authentication", resource_type: "session" });
     await flushAuditQueue();
-    clearTokens();
+    await logoutSession();
     router.replace("/login");
   }
 

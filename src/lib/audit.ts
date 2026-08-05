@@ -1,7 +1,6 @@
-import { API_URL } from "@/lib/api";
+import { API_URL, CSRF_KEY, hasSession } from "@/lib/api";
 
 const AUDIT_QUEUE_KEY = "meridian_audit_outbox_v1";
-const ACCESS_KEY = "meridian_doctor_access_token";
 const MAX_QUEUED_EVENTS = 1000;
 
 export const AUDIT_EVENTS = {
@@ -93,8 +92,7 @@ export function queueAuditEvent(input: AuditEventInput) {
 
 export async function flushAuditQueue() {
   if (typeof window === "undefined" || flushing || !navigator.onLine) return;
-  const token = localStorage.getItem(ACCESS_KEY);
-  if (!token) return;
+  if (!hasSession()) return;
   flushing = true;
   try {
     const queue = readQueue();
@@ -103,9 +101,10 @@ export async function flushAuditQueue() {
       try {
         const response = await fetch(`${API_URL}/audit/events`, {
           method: "POST",
+          credentials: "include",
           headers: {
-            Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
+            "X-CSRF-Token": localStorage.getItem(CSRF_KEY) || "",
           },
           body: JSON.stringify(event),
         });

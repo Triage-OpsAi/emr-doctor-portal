@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { AddMedicationModal, AddRecordModal, Modal, ReportUploadModal, VoiceEncounterModal } from "@/components/PortalApp";
 import { Icon, type IconName } from "@/components/Icon";
 import { TriCareLogo } from "@/components/TriCareLogo";
-import { apiFetch, clearTokens, hasSession } from "@/lib/api";
+import { apiFetch, hasSession, logoutSession } from "@/lib/api";
 import { AUDIT_EVENTS, flushAuditQueue, queueAuditEvent } from "@/lib/audit";
 import type {
   ClinicalUser,
@@ -1205,7 +1205,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
   async function logout() {
     queueAuditEvent({ action: AUDIT_EVENTS.USER_LOGOUT, event_category: "authentication", resource_type: "session" });
     await flushAuditQueue();
-    clearTokens();
+    await logoutSession();
     router.replace("/login");
   }
 

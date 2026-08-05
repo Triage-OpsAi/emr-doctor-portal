@@ -2,38 +2,46 @@ export const API_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
   "http://127.0.0.1:8001/api/v1";
 
-const ACCESS_KEY = "meridian_doctor_access_token";
-const REFRESH_KEY = "meridian_doctor_refresh_token";
+const SESSION_MARKER_KEY = "meridian_doctor_session";
+export const CSRF_KEY = "meridian_doctor_csrf_token";
 
-export function storeTokens(accessToken: string, refreshToken: string) {
-  localStorage.setItem(ACCESS_KEY, accessToken);
-  localStorage.setItem(REFRESH_KEY, refreshToken);
+type SessionResponse = {
+  csrf_token?: string;
+};
+
+function storeSession(session: SessionResponse) {
+  localStorage.setItem(SESSION_MARKER_KEY, "active");
+  if (session.csrf_token) localStorage.setItem(CSRF_KEY, session.csrf_token);
   void import("@/lib/audit").then(({ flushAuditQueue }) => flushAuditQueue());
 }
 
 export function clearTokens() {
-  localStorage.removeItem(ACCESS_KEY);
-  localStorage.removeItem(REFRESH_KEY);
+  localStorage.removeItem(SESSION_MARKER_KEY);
+  localStorage.removeItem(CSRF_KEY);
 }
 
 export function hasSession() {
-  return Boolean(localStorage.getItem(ACCESS_KEY));
+  return localStorage.getItem(SESSION_MARKER_KEY) === "active";
 }
 
 async function refreshAccessToken() {
-  const refreshToken = localStorage.getItem(REFRESH_KEY);
-  if (!refreshToken) return null;
+  const csrfToken = localStorage.getItem(CSRF_KEY);
+  if (!csrfToken) return false;
   const response = await fetch(`${API_URL}/auth/refresh`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: refreshToken }),
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json",
+      "X-CSRF-Token": csrfToken,
+    },
+    body: JSON.stringify({}),
   });
   if (!response.ok) {
     clearTokens();
-    return null;
+    return false;
   }
-  const tokens = await response.json();
-  storeTokens(tokens.access_token, tokens.refresh_token);
+  const session = (await response.json()) as SessionResponse;
+  storeSession(session);
   void import("@/lib/audit").then(({ queueAuditEvent }) =>
     queueAuditEvent({
       action: "session.refresh",
@@ -41,7 +49,7 @@ async function refreshAccessToken() {
       resource_type: "session",
     }),
   );
-  return tokens.access_token as string;
+  return true;
 }
 
 export async function apiFetch<T>(
@@ -50,12 +58,19 @@ export async function apiFetch<T>(
   retry = true,
 ): Promise<T> {
   const headers = new Headers(init.headers);
-  const token = localStorage.getItem(ACCESS_KEY);
-  if (token) headers.set("Authorization", `Bearer ${token}`);
+  const method = (init.method || "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrfToken = localStorage.getItem(CSRF_KEY);
+    if (csrfToken) headers.set("X-CSRF-Token", csrfToken);
+  }
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(`${API_URL}${path}`, { ...init, headers });
+  const response = await fetch(`${API_URL}${path}`, {
+    ...init,
+    credentials: "include",
+    headers,
+  });
   if (response.status === 401 && retry && (await refreshAccessToken())) {
     return apiFetch<T>(path, init, false);
   }
@@ -84,6 +99,7 @@ export async function apiFetch<T>(
 export async function clinicalLogin(email: string, password: string, hospitalCode: string) {
   const response = await fetch(`${API_URL}/auth/clinical/login`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password, hospital_code: hospitalCode }),
   });
@@ -91,8 +107,25 @@ export async function clinicalLogin(email: string, password: string, hospitalCod
     const payload = await response.json().catch(() => ({}));
     throw new Error(payload.detail || "Unable to sign in");
   }
-  const tokens = await response.json();
-  storeTokens(tokens.access_token, tokens.refresh_token);
+  const session = (await response.json()) as SessionResponse;
+  storeSession(session);
+}
+
+export async function logoutSession() {
+  const csrfToken = localStorage.getItem(CSRF_KEY);
+  try {
+    await fetch(`${API_URL}/auth/logout`, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
+      },
+      body: JSON.stringify({}),
+    });
+  } finally {
+    clearTokens();
+  }
 }
 
 export async function fetchClinicalHospitalCode(
@@ -101,6 +134,7 @@ export async function fetchClinicalHospitalCode(
 ) {
   const response = await fetch(`${API_URL}/auth/clinical/hospital-code`, {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
     signal,

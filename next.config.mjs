@@ -6,6 +6,7 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants.js";
 export default function nextConfig(phase) {
   return {
     output: "standalone",
+    poweredByHeader: false,
     // Keep development artifacts isolated from `next build`. Running a build
     // while the dev server is open must never corrupt its dynamic route table.
     distDir: phase === PHASE_DEVELOPMENT_SERVER ? ".next-dev" : ".next",

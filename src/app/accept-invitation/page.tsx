@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
@@ -9,10 +9,14 @@ import { API_URL } from "@/lib/api";
 
 function InvitationForm() {
   const searchParams = useSearchParams();
-  const token = searchParams.get("token") || "";
+  const [token] = useState(() => searchParams.get("token") || "");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [hospitalCode, setHospitalCode] = useState("");
+
+  useEffect(() => {
+    if (token) window.history.replaceState(null, "", window.location.pathname);
+  }, [token]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -26,6 +30,7 @@ function InvitationForm() {
     }
     const response = await fetch(`${API_URL}/auth/invitations/accept`, {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token, password: form.get("password") }),
     });

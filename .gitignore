@@ -27,8 +27,10 @@ yarn-debug.log*
 yarn-error.log*
 .ward-voice-*.log
 
-# local env files
-.env*.local
+# local env files (only the documented, non-secret template is versioned)
+.env
+.env.*
+!.env.example
 
 # vercel
 .vercel
