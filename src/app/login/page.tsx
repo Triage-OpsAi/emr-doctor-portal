@@ -6,13 +6,15 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { TriCareLogo } from "@/components/TriCareLogo";
-import { apiFetch, clinicalLogin, hasSession } from "@/lib/api";
+import { apiFetch, clinicalLogin, fetchClinicalHospitalCode, hasSession } from "@/lib/api";
 import { AUDIT_EVENTS, queueAuditEvent } from "@/lib/audit";
 import type { Workspace } from "@/lib/types";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [email, setEmail] = useState("");
   const [hospitalCode, setHospitalCode] = useState("");
+  const [hospitalCodeStatus, setHospitalCodeStatus] = useState<"idle" | "loading" | "found" | "manual">("idle");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -26,23 +28,62 @@ export default function LoginPage() {
       .catch(() => undefined);
   }, [router]);
 
+  useEffect(() => {
+    const normalizedEmail = email.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) return;
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setHospitalCodeStatus("loading");
+      try {
+        const code = await fetchClinicalHospitalCode(normalizedEmail, controller.signal);
+        setHospitalCode(code);
+        setHospitalCodeStatus("found");
+      } catch {
+        if (controller.signal.aborted) return;
+        setHospitalCodeStatus("manual");
+      }
+    }, 400);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [email]);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
     setError("");
     const form = new FormData(event.currentTarget);
     try {
+      const submittedEmail = String(form.get("email")).trim();
+      const submittedPassword = String(form.get("password"));
+      let submittedHospitalCode = String(form.get("hospital_code")).trim();
+
+      // Password managers can populate an email without firing an input event.
+      // Resolve the tenant again at submit time so a stale/manual code is never preferred.
+      try {
+        submittedHospitalCode = await fetchClinicalHospitalCode(submittedEmail);
+        setHospitalCode(submittedHospitalCode);
+        setHospitalCodeStatus("found");
+      } catch {
+        if (!submittedHospitalCode) {
+          throw new Error("Hospital code could not be found. Enter it manually.");
+        }
+      }
+
       await clinicalLogin(
-        String(form.get("email")),
-        String(form.get("password")),
-        String(form.get("hospital_code")),
+        submittedEmail,
+        submittedPassword,
+        submittedHospitalCode,
       );
       const workspace = await apiFetch<Workspace>("/doctor/workspace");
       queueAuditEvent({
         action: AUDIT_EVENTS.USER_LOGIN,
         event_category: "authentication",
         resource_type: "session",
-        event_metadata: { hospital_code: String(form.get("hospital_code")) },
+        event_metadata: { hospital_code: submittedHospitalCode },
       });
       router.replace(workspace.workspace_path);
     } catch (reason) {
@@ -125,14 +166,23 @@ export default function LoginPage() {
                 <span className="mb-2 block text-[11px] font-semibold text-[var(--muted)]">Work email</span>
                 <span className="relative block">
                   <Icon name="mail" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
-                  <input name="email" type="email" required autoComplete="email" placeholder="doctor@hospital.com" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                  <input name="email" type="email" required autoComplete="email" value={email} onChange={(event) => {
+                    setEmail(event.target.value);
+                    setHospitalCode("");
+                    setHospitalCodeStatus("idle");
+                  }} placeholder="doctor@hospital.com" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
                 </span>
               </label>
               <label className="block">
-                <span className="mb-2 block text-[11px] font-semibold text-[var(--muted)]">Hospital code</span>
+                <span className="mb-2 flex items-center justify-between gap-3 text-[11px] font-semibold text-[var(--muted)]">
+                  <span>Hospital code</span>
+                  <span className="font-mono text-[8px] font-normal uppercase tracking-[.12em] text-[var(--faint)]">
+                    {hospitalCodeStatus === "loading" ? "Finding workspace..." : hospitalCodeStatus === "found" ? "Found from email" : hospitalCodeStatus === "manual" ? "Enter code manually" : "Fetched from email"}
+                  </span>
+                </span>
                 <span className="relative block">
                   <Icon name="building" size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[var(--faint)]" />
-                  <input name="hospital_code" required autoCapitalize="characters" spellCheck={false} value={hospitalCode} onChange={(event) => setHospitalCode(event.target.value.toUpperCase())} placeholder="ENTER HOSPITAL CODE" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 font-mono text-sm uppercase tracking-[.08em] transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
+                  <input name="hospital_code" required readOnly={hospitalCodeStatus === "loading" || hospitalCodeStatus === "found"} aria-busy={hospitalCodeStatus === "loading"} autoCapitalize="characters" spellCheck={false} value={hospitalCode} onChange={(event) => setHospitalCode(event.target.value.toUpperCase())} placeholder={hospitalCodeStatus === "loading" ? "LOOKING UP..." : "ENTER HOSPITAL CODE"} className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 font-mono text-sm uppercase tracking-[.08em] transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)] read-only:cursor-default" />
                 </span>
               </label>
               <label className="block">
