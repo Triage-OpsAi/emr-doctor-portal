@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import localFont from "next/font/local";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
@@ -19,11 +20,16 @@ export const metadata: Metadata = {
   description: "Secure clinical workspace for hospital teams.",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // The proxy generates a fresh CSP nonce for every document request. Reading
+  // request headers opts the app shell into dynamic rendering so Next can add
+  // that same nonce to its framework and hydration scripts.
+  await headers();
+
   return (
     <html lang="en" suppressHydrationWarning>
       <body
