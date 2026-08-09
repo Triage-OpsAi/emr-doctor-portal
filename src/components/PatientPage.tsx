@@ -966,18 +966,26 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
       duration: medication.duration || "—",
       status: medication.is_active ? "Ordered" : "Stopped",
     }));
-    const generated = (note?.medications || [])
-      .filter((medication) => !entered.some((item) => item.name.toLowerCase() === medication.name.toLowerCase()))
-      .map((medication, index) => ({
-        id: `emr-${index}`,
-        name: medication.name,
-        dosage: medication.dosage || "—",
-        frequency: medication.frequency || "—",
-        duration: "—",
-        status: "Documented",
-      }));
+    const seenNames = new Set(
+      entered.map((medication) => medication.name.trim().toLowerCase()),
+    );
+    const generated = chart.records.flatMap((record) =>
+      (record.structured_note?.medications || []).flatMap((medication, index) => {
+        const normalizedName = medication.name.trim().toLowerCase();
+        if (!normalizedName || seenNames.has(normalizedName)) return [];
+        seenNames.add(normalizedName);
+        return [{
+          id: `emr-${record.id}-${index}`,
+          name: medication.name,
+          dosage: medication.dosage || "—",
+          frequency: medication.frequency || "—",
+          duration: "—",
+          status: "Documented",
+        }];
+      }),
+    );
     return [...entered, ...generated];
-  }, [chart, note]);
+  }, [chart]);
   const treatmentPoints = useMemo(() => {
     const planItems = points(note?.plan);
     if (planItems.length) return planItems;
