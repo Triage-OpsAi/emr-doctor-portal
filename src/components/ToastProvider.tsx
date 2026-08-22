@@ -46,6 +46,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   }, [remove]);
 
   useEffect(() => {
+    let flashTimer: number | undefined;
     const receiveToast = (event: Event) => {
       const detail = (event as CustomEvent<{ message: string; kind?: ToastKind }>).detail;
       if (detail?.message) toast(detail.message, detail.kind);
@@ -55,9 +56,12 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const flash = sessionStorage.getItem(FLASH_TOAST_KEY);
     if (flash) {
       sessionStorage.removeItem(FLASH_TOAST_KEY);
-      toast(flash, "info");
+      flashTimer = window.setTimeout(() => toast(flash, "info"), 0);
     }
-    return () => window.removeEventListener(TOAST_EVENT, receiveToast);
+    return () => {
+      if (flashTimer) window.clearTimeout(flashTimer);
+      window.removeEventListener(TOAST_EVENT, receiveToast);
+    };
   }, [toast]);
 
   useEffect(() => {

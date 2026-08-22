@@ -6,6 +6,7 @@ import { ThemeToggle } from "@/components/ThemeProvider";
 import { Icon, IconName } from "@/components/Icon";
 import { WardVoice } from "@/components/WardVoice";
 import { TriCareLogo } from "@/components/TriCareLogo";
+import { AnalyticsPage } from "@/components/AnalyticsPage";
 import { apiFetch, clearTokens, hasSession, logoutSession } from "@/lib/api";
 import {
   AUDIT_EVENT_LABELS,
@@ -32,10 +33,11 @@ import type {
   Workspace,
 } from "@/lib/types";
 
-type Tab = "home" | "ward-voice" | "users" | "network" | "library" | "audit" | "settings";
+type Tab = "home" | "analytics" | "ward-voice" | "users" | "network" | "library" | "audit" | "settings";
 
 const NAV: { id: Tab; label: string; icon: IconName; permission?: string }[] = [
   { id: "home", label: "Home", icon: "home" },
+  { id: "analytics", label: "Analytics", icon: "activity", permission: "emr:read" },
   { id: "ward-voice", label: "Ward Voice", icon: "mic", permission: "emr:read" },
   { id: "users", label: "Users", icon: "users", permission: "users:manage" },
   { id: "network", label: "My Network", icon: "network", permission: "network:manage" },
@@ -1538,7 +1540,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
           <TriCareLogo size={44} className="rounded-xl bg-transparent shadow-none" />
           {!collapsed && <div className="min-w-0"><p className="truncate text-xl font-semibold tracking-tight">Tri-Care</p><p className="mt-1 truncate text-[10px] uppercase tracking-[.18em] text-white/55">Doctor portal</p></div>}
         </div>
-        <nav className="flex-1 space-y-2 p-4 pt-6">
+        <nav className="flex-1 space-y-2 overflow-y-auto p-4 pt-6">
           {visibleNav.map((item) => (
             <button key={item.id} onClick={() => { setTab(item.id); setMobileOpen(false); }} title={collapsed ? item.label : undefined} className={`focus-ring flex h-14 w-full items-center rounded-xl text-[15px] font-medium transition ${collapsed ? "justify-center" : "gap-4 px-4"} ${tab === item.id ? "bg-[linear-gradient(135deg,#315aa8,#284b91)] text-white shadow-[0_8px_18px_rgba(1,12,37,.25)]" : "text-white/72 hover:bg-white/10 hover:text-white"}`}>
               <Icon name={item.icon} size={21} /> {!collapsed && <span>{item.label}</span>}
@@ -1561,6 +1563,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
           </div>
         </div>
         {tab === "home" && <Dashboard workspace={workspace} records={records} voiceJobs={voiceJobs} loading={recordsLoading} error={recordsError} refresh={() => loadRecords()} />}
+        {tab === "analytics" && <AnalyticsPage workspace={workspace} records={records} loading={recordsLoading} />}
         {tab === "ward-voice" && <WardVoice role={workspace.current_user.role} />}
         {tab === "users" && <UsersPage />}
         {tab === "network" && <NetworkPage />}
