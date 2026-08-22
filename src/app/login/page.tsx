@@ -1,21 +1,23 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/Icon";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { TriCareLogo } from "@/components/TriCareLogo";
+import { useToast } from "@/components/ToastProvider";
 import { apiFetch, clinicalLogin, fetchClinicalHospitalCode, hasSession } from "@/lib/api";
 import { AUDIT_EVENTS, queueAuditEvent } from "@/lib/audit";
 import type { Workspace } from "@/lib/types";
 
 export default function LoginPage() {
   const router = useRouter();
+  const toast = useToast();
+  const resolvedEmail = useRef("");
   const [email, setEmail] = useState("");
   const [hospitalCode, setHospitalCode] = useState("");
   const [hospitalCodeStatus, setHospitalCodeStatus] = useState<"idle" | "loading" | "found" | "manual">("idle");
-  const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function LoginPage() {
       try {
         const code = await fetchClinicalHospitalCode(normalizedEmail, controller.signal);
         setHospitalCode(code);
+        resolvedEmail.current = normalizedEmail.toLowerCase();
         setHospitalCodeStatus("found");
       } catch {
         if (controller.signal.aborted) return;
@@ -54,40 +57,41 @@ export default function LoginPage() {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitting(true);
-    setError("");
     const form = new FormData(event.currentTarget);
     try {
       const submittedEmail = String(form.get("email")).trim();
       const submittedPassword = String(form.get("password"));
       let submittedHospitalCode = String(form.get("hospital_code")).trim();
 
-      // Password managers can populate an email without firing an input event.
-      // Resolve the tenant again at submit time so a stale/manual code is never preferred.
-      try {
+      // The email lookup has normally completed while the password is entered.
+      // Only make a submit-time lookup for password-manager/autofill cases where
+      // there is no usable code, avoiding a duplicate network round trip.
+      if (!submittedHospitalCode || (hospitalCodeStatus === "found" && resolvedEmail.current !== submittedEmail.toLowerCase())) {
         submittedHospitalCode = await fetchClinicalHospitalCode(submittedEmail);
         setHospitalCode(submittedHospitalCode);
+        resolvedEmail.current = submittedEmail.toLowerCase();
         setHospitalCodeStatus("found");
-      } catch {
-        if (!submittedHospitalCode) {
-          throw new Error("Hospital code could not be found. Enter it manually.");
-        }
       }
 
-      await clinicalLogin(
+      const session = await clinicalLogin(
         submittedEmail,
         submittedPassword,
         submittedHospitalCode,
       );
-      const workspace = await apiFetch<Workspace>("/doctor/workspace");
       queueAuditEvent({
         action: AUDIT_EVENTS.USER_LOGIN,
         event_category: "authentication",
         resource_type: "session",
         event_metadata: { hospital_code: submittedHospitalCode },
       });
-      router.replace(workspace.workspace_path);
+      if (session.workspace_path) {
+        router.replace(session.workspace_path);
+      } else {
+        const workspace = await apiFetch<Workspace>("/doctor/workspace");
+        router.replace(workspace.workspace_path);
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to sign in");
+      toast(reason instanceof Error ? reason.message : "Unable to sign in", "error");
       setSubmitting(false);
     }
   }
@@ -154,13 +158,6 @@ export default function LoginPage() {
               <span className="hidden h-10 w-10 place-items-center rounded-xl border text-[var(--teal)] sm:grid"><Icon name="shield" size={18} /></span>
             </div>
 
-            {error && (
-              <div role="alert" className="mt-6 flex gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3.5 text-sm text-[var(--danger)]">
-                <Icon name="help-circle" size={17} className="mt-0.5 shrink-0" />
-                <span>{error}</span>
-              </div>
-            )}
-
             <form onSubmit={submit} className="mt-7 space-y-4">
               <label className="block">
                 <span className="mb-2 block text-[11px] font-semibold text-[var(--muted)]">Work email</span>
@@ -169,6 +166,7 @@ export default function LoginPage() {
                   <input name="email" type="email" required autoComplete="email" value={email} onChange={(event) => {
                     setEmail(event.target.value);
                     setHospitalCode("");
+                    resolvedEmail.current = "";
                     setHospitalCodeStatus("idle");
                   }} placeholder="doctor@hospital.com" className="focus-ring h-12 w-full rounded-xl border bg-[var(--ink)] pl-11 pr-3 text-sm transition placeholder:text-[var(--faint)] hover:border-[var(--muted)] focus:border-[var(--teal)]" />
                 </span>
