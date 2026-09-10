@@ -11,6 +11,7 @@ const navigation = [
   ["How it works", "#workflow"],
   ["Features", "#features"],
   ["Security", "#security"],
+  ["Privacy Policy", "/privacy-policy"],
 ] as const;
 
 const capabilities: Array<{ icon: IconName; title: string; copy: string }> = [
