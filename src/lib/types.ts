@@ -18,6 +18,8 @@ export type Workspace = {
     email: string;
     role: string;
     permissions: string[];
+    department_id?: string | null;
+    department_name?: string | null;
   };
   workspace_slug: string;
   encrypted_client_id: string;

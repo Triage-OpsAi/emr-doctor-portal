@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { Icon, IconName } from "@/components/Icon";
 import { WardVoice } from "@/components/WardVoice";
+import { DepartmentManager, type Department } from "@/components/DepartmentManager";
 import { TriCareLogo } from "@/components/TriCareLogo";
 import { AnalyticsPage } from "@/components/AnalyticsPage";
 import { apiFetch, clearTokens, hasSession, logoutSession } from "@/lib/api";
@@ -1096,6 +1097,7 @@ function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow: string; tit
 }
 
 function UsersPage() {
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [users, setUsers] = useState<ClinicalUser[]>([]);
   const [roles, setRoles] = useState<ClinicalRole[]>([]);
   const [invitations, setInvitations] = useState<ClinicalInvitation[]>([]);
@@ -1109,7 +1111,9 @@ function UsersPage() {
       apiFetch<ClinicalUser[]>("/doctor/users"),
       apiFetch<ClinicalRole[]>("/doctor/roles"),
       apiFetch<ClinicalInvitation[]>("/doctor/invitations"),
-    ]).then(([userRows, roleRows, inviteRows]) => {
+      apiFetch<Department[]>("/doctor/departments"),
+    ]).then(([userRows, roleRows, inviteRows, departmentRows]) => {
+      setDepartments(departmentRows);
       setUsers(userRows); setRoles(roleRows); setInvitations(inviteRows);
     }).catch((reason) => setError(reason.message));
   }, []);
@@ -1124,7 +1128,7 @@ function UsersPage() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     try {
-      await apiFetch("/doctor/invitations", { method: "POST", body: JSON.stringify({ full_name: form.get("full_name"), email: form.get("email"), role_id: form.get("role_id") }) });
+      await apiFetch("/doctor/invitations", { method: "POST", body: JSON.stringify({ full_name: form.get("full_name"), email: form.get("email"), role_id: form.get("role_id"), department_id: form.get("department_id") }) });
       setMessage("Invitation sent successfully.");
       setShowInvite(false);
       load();
@@ -1162,6 +1166,7 @@ function UsersPage() {
       <main className="space-y-6 p-5 md:p-8">
         {error && <p className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-[var(--danger)]">{error}</p>}
         {message && <p className="rounded-lg border border-[var(--teal)]/30 bg-[var(--teal-soft)] p-3 text-sm text-[var(--teal)]">{message}</p>}
+        <DepartmentManager onChanged={load} />
         <section className="overflow-hidden rounded-xl border bg-[var(--ink-elevated)]">
           <div className="border-b p-5"><h2 className="font-display font-semibold">Workspace members</h2></div>
           <div className="divide-y">
@@ -1200,6 +1205,8 @@ function UsersPage() {
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Full name *</span><input name="full_name" required className={inputClass} /></label>
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Email *</span><input name="email" type="email" required className={inputClass} /></label>
             <label><span className="mb-2 block text-xs text-[var(--muted)]">Permission role *</span><select name="role_id" required className={inputClass}><option value="">Select a role</option>{roles.map((role) => <option key={role.id} value={role.id}>{role.name.replaceAll("_", " ")} · {role.permissions.length} permissions</option>)}</select></label>
+            <label><span className="mb-2 block text-xs text-[var(--muted)]">Department *</span><select name="department_id" required className={inputClass}><option value="">Select a department</option>{departments.filter(department => department.is_active).map(department => <option key={department.id} value={department.id}>{department.name}</option>)}</select></label>
+            {!departments.length && <p className="text-sm text-amber-600">Add a department in the Departments table before inviting a user.</p>}
             <div className="flex justify-end gap-3 pt-2"><button type="button" onClick={() => setShowInvite(false)} className={buttonSecondary}>Cancel</button><button className={buttonPrimary}><Icon name="mail" size={15} /> Send invitation</button></div>
           </form>
         </Modal>
@@ -1555,7 +1562,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
       <div className={`transition-[margin] duration-200 ${collapsed ? "lg:ml-[76px]" : "lg:ml-[264px]"}`}>
         <div className="sticky top-0 z-20 flex h-[74px] items-center justify-between border-b border-[#dfe5ed] bg-white/95 px-4 text-[#14203a] backdrop-blur sm:px-6 lg:px-8">
           <button onClick={() => setMobileOpen(true)} className="focus-ring rounded-lg p-2 text-[#5e6c86] lg:hidden" aria-label="Open navigation"><Icon name="menu" /></button>
-          <div className="hidden items-center gap-2 text-xs text-[var(--faint)] sm:flex"><span>{workspace.organization.name}</span><span>·</span><span className="capitalize">{workspace.current_user.role.replaceAll("_", " ")}</span></div>
+          <div className="hidden items-center gap-2 text-xs text-[var(--faint)] sm:flex"><span>{workspace.organization.name}</span><span>·</span><span className="capitalize">{workspace.current_user.role.replaceAll("_", " ")}</span><span>·</span><span>{workspace.current_user.department_name || "Department unassigned"}</span></div>
           <div className="ml-auto flex items-center gap-3 sm:gap-5">
             <ThemeToggle />
             <span className="relative grid h-9 w-9 place-items-center text-[#62708a]"><Icon name="bell" size={21} />{notificationCount > 0 && <span className="absolute right-0 top-0 grid h-4 min-w-4 place-items-center rounded-full bg-[#12a89d] px-1 text-[9px] font-bold text-white">{notificationCount}</span>}</span>

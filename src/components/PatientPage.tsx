@@ -5,6 +5,9 @@ import { useRouter } from "next/navigation";
 import { AddMedicationModal, AddRecordModal, Modal, ReportUploadModal, VoiceEncounterModal } from "@/components/PortalApp";
 import { Icon, type IconName } from "@/components/Icon";
 import { TriCareLogo } from "@/components/TriCareLogo";
+import { ApprovalDialog } from "@/components/ApprovalDialog";
+import { ConsentDialog } from "@/components/ConsentDialog";
+import { PatientRecordDialog } from "@/components/PatientRecordDialog";
 import { apiFetch, hasSession, logoutSession } from "@/lib/api";
 import { AUDIT_EVENTS, flushAuditQueue, queueAuditEvent } from "@/lib/audit";
 import type {
@@ -893,6 +896,9 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
   const [editingTab, setEditingTab] = useState<PatientTab | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
   const [sectionBusy, setSectionBusy] = useState("");
+  const [signingSection, setSigningSection] = useState<PatientTab | null>(null);
+  const [showConsents, setShowConsents] = useState(false);
+  const [showRecord, setShowRecord] = useState(false);
 
   const workspacePath = `/${clientName}/${workspaceId}`;
 
@@ -1123,21 +1129,6 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
       setError(reason instanceof Error ? reason.message : "Unable to approve the report summary.");
     } finally {
       setApproving("");
-    }
-  }
-
-  async function approveSection(section: PatientTab) {
-    setSectionBusy(`approve-${section}`);
-    setError("");
-    try {
-      await apiFetch(`/patients/${patientId}/sections/${section}/approve`, {
-        method: "POST",
-      });
-      await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to approve this section.");
-    } finally {
-      setSectionBusy("");
     }
   }
 
@@ -1395,6 +1386,8 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                   </div>
 
                   <div className="flex flex-wrap items-start justify-end gap-2">
+                    <button type="button" onClick={() => setShowRecord(true)} className={actionButton}>View patient record</button>
+                    <button type="button" onClick={() => setShowConsents(true)} className={actionButton}>Department consent</button>
                     <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${!latest ? "bg-amber-50 text-amber-700" : latest.status === "pending_review" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
                       <span className={`h-2 w-2 rounded-full ${!latest ? "bg-amber-500" : latest.status === "pending_review" ? "bg-red-500" : "bg-emerald-500"}`} />
                       {!latest ? "Awaiting record" : latest.status === "pending_review" ? "Needs review" : "Approved"}
@@ -1496,12 +1489,12 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                     )}
                     <button
                       type="button"
-                      onClick={() => void approveSection(activeTab)}
-                      disabled={Boolean(sectionBusy) || Boolean(activeSectionReview?.is_approved) || sectionDeleted}
+                      onClick={() => setSigningSection(activeTab)}
+                      disabled={Boolean(sectionBusy) || Boolean(activeSectionReview?.is_approved) || sectionDeleted || editingTab !== null || !workspace?.current_user.permissions.includes("emr:review")}
                       className={activeSectionReview?.is_approved ? actionButton : primaryButton}
                     >
                       <Icon name="shield" size={13} />
-                      {activeSectionReview?.is_approved ? "Approved" : sectionBusy === `approve-${activeTab}` ? "Approving…" : "Approve all"}
+                      {activeSectionReview?.is_approved ? "Signed and approved" : "Review and sign"}
                     </button>
                   </div>
                 </div>
@@ -2169,6 +2162,9 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
         </main>
       </div>
 
+      {signingSection && <ApprovalDialog patientId={patient.id} visitId={selectedVisit?.id} section={signingSection} signerName={workspace?.current_user.full_name || "Current user"} onClose={() => setSigningSection(null)} onSigned={() => { setSigningSection(null); void load(); }} />}
+      {showConsents && <ConsentDialog patientId={patient.id} patientName={patient.patient_name} visitId={selectedVisit?.id} clinicianName={workspace?.current_user.full_name || "Current user"} canCreate={Boolean(workspace?.current_user.permissions.includes("emr:create"))} onClose={() => setShowConsents(false)} />}
+      {showRecord && <PatientRecordDialog patientId={patient.id} onClose={() => setShowRecord(false)} />}
       {action === "report" && <ReportUploadModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "record" && <AddRecordModal patientId={patient.id} visitId={selectedVisit?.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "voice-encounter" && <VoiceEncounterModal patientId={patient.id} visitId={selectedVisit?.id} onClose={() => setAction(null)} onQueued={() => { setEncounterQueued(true); setActiveTab("timeline"); void load(); }} />}
