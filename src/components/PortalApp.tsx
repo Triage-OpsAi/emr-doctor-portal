@@ -1,4 +1,5 @@
 "use client";
+import { useClinicalRefresh } from "@/lib/useClinicalRefresh";
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -1475,14 +1476,17 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
   const [mobileOpen, setMobileOpen] = useState(false);
   const [loadingError, setLoadingError] = useState("");
 
+  const recordsRequest = useRef(0);
   const loadRecords = useCallback((silent = false) => {
+    const requestId = ++recordsRequest.current;
     if (!silent) setRecordsLoading(true);
     setRecordsError("");
-    Promise.allSettled([
+    return Promise.allSettled([
       apiFetch<PatientDashboardRecord[]>("/doctor/patients"),
       apiFetch<VoiceJob[]>("/emr/voice-jobs"),
     ])
       .then(([patientsResult, jobsResult]) => {
+        if (requestId !== recordsRequest.current) return;
         if (patientsResult.status === "fulfilled") {
           setRecords(patientsResult.value);
         } else {
@@ -1492,7 +1496,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
           setVoiceJobs(jobsResult.value);
         }
       })
-      .finally(() => setRecordsLoading(false));
+      .finally(() => { if (requestId === recordsRequest.current) setRecordsLoading(false); });
   }, []);
 
   useEffect(() => {
@@ -1516,11 +1520,7 @@ export function PortalApp({ clientName, workspaceId }: { clientName: string; wor
 
   useEffect(() => startAuditRetryService(), []);
 
-  useEffect(() => {
-    if (voiceJobs.length === 0) return;
-    const poller = setInterval(() => loadRecords(true), 3000);
-    return () => clearInterval(poller);
-  }, [loadRecords, voiceJobs.length]);
+  useClinicalRefresh(() => loadRecords(true), voiceJobs.some(job => !["ready", "failed"].includes(job.status)) ? 3000 : 10000);
 
   const visibleNav = useMemo(
     () => NAV.filter((item) => !item.permission || workspace?.current_user.permissions.includes(item.permission)),

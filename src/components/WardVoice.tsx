@@ -1,17 +1,19 @@
 "use client";
+import { WardVitals } from "./WardVitals";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { Icon } from "@/components/Icon";
 import type { FluidChart, WardConsumable, WardCountersign, WardVoiceBed, WardVoiceCaptureResult, WardVoiceObservation, WardVoiceOverview, WardVoiceWard } from "@/lib/types";
 
-type WardTab = "rounds" | "capture" | "fluid" | "consumables" | "board" | "handover" | "countersigns" | "compliance";
+type WardTab = "vitals" | "rounds" | "capture" | "fluid" | "consumables" | "board" | "handover" | "countersigns" | "compliance";
 const tabs: { id: WardTab; label: string }[] = [
-  { id: "rounds", label: "Rounds" }, { id: "capture", label: "Capture" },
+  { id: "vitals", label: "Vitals & blood sugar" }, { id: "rounds", label: "Rounds" }, { id: "capture", label: "Capture" },
   { id: "fluid", label: "Fluid charts" }, { id: "consumables", label: "Consumables" }, { id: "board", label: "Ward board" },
   { id: "handover", label: "Handover" }, { id: "countersigns", label: "Countersigns" },
   { id: "compliance", label: "Compliance" },
 ];
+const vitalUnits: Record<string, string[]> = {systolic_bp:["mmHg"],diastolic_bp:["mmHg"],blood_glucose:["mg/dL","mmol/L"],temperature:["C","F"],pulse:["/min"],spo2:["%"],respiratory_rate:["/min"]};
 const mono = "font-mono text-[10px] uppercase tracking-[.14em]";
 
 function CapturePanel({ bed, onConfirmed }: { bed: WardVoiceBed | null; onConfirmed: () => void }) {
@@ -117,14 +119,15 @@ function CapturePanel({ bed, onConfirmed }: { bed: WardVoiceBed | null; onConfir
                   {observations.map((item, index) => (
                     <label key={`${item.observation_type}-${index}`} className={`rounded-xl border p-3 ${item.requires_countersign ? "border-amber-500 bg-amber-50" : "border-[#ddd2ff]"}`}>
                       <span className={`${mono} block text-[#625b73]`}>{item.observation_type.replaceAll("_", " ")} {item.unit ? `· ${item.unit}` : ""}</span>
-                      <input value={item.value_numeric ?? item.value_text ?? ""} onChange={(event) => setObservations((current) => current.map((entry, position) => position === index ? { ...entry, value_numeric: event.target.value === "" ? null : Number(event.target.value), value_text: null } : entry))} className="mt-1 w-full bg-transparent font-mono text-xl font-bold outline-none" />
+                      <input type={vitalUnits[item.observation_type] || item.value_numeric !== null ? "number" : "text"} step="any" value={item.value_numeric ?? item.value_text ?? ""} onChange={(event) => setObservations((current) => current.map((entry, position) => position === index ? { ...entry, value_numeric: vitalUnits[entry.observation_type] || entry.value_numeric !== null ? (event.target.value === "" ? null : Number(event.target.value)) : null, value_text: vitalUnits[entry.observation_type] || entry.value_numeric !== null ? null : event.target.value } : entry))} className="mt-1 w-full bg-transparent font-mono text-xl font-bold outline-none" />
+                      {vitalUnits[item.observation_type] && <select aria-label={`${item.observation_type} unit`} value={item.unit || ""} onChange={event => setObservations(current => current.map((entry,position) => position === index ? {...entry,unit:event.target.value} : entry))} className="mt-2 rounded border bg-white p-2 text-xs"><option value="">Select unit</option>{vitalUnits[item.observation_type].map(unit => <option key={unit}>{unit}</option>)}</select>}
                       {item.requires_countersign && <span className={`${mono} text-amber-700`}>Countersign required</span>}
                     </label>
                   ))}
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3">
                   <button type="button" onClick={() => { setResult(null); setAudio(null); void start(); }} className="h-12 rounded-xl border border-[#ddd2ff] font-bold">Re-record</button>
-                  <button type="button" onClick={confirm} disabled={processing} className="h-12 rounded-xl bg-[#6d28d9] font-bold text-white">{processing ? "Saving…" : "Confirm → chart"}</button>
+                  <button type="button" onClick={confirm} disabled={processing || observations.some(item => vitalUnits[item.observation_type] && (!item.unit || item.value_numeric === null))} className="h-12 rounded-xl bg-[#6d28d9] font-bold text-white">{processing ? "Saving…" : "Confirm → chart"}</button>
                 </div>
                 <p className={`${mono} mt-3 text-center text-[#777087]`}>Nothing is charted until you confirm</p>
               </>
@@ -335,7 +338,7 @@ export function WardVoice({ role }: { role: string }) {
   const [error, setError] = useState("");
   const patientRequest = useRef(0);
   const isDoctor = role.toLowerCase() === "doctor";
-  const visibleTabs = isDoctor ? tabs.filter((item) => item.id === "rounds" || item.id === "countersigns") : tabs;
+  const visibleTabs = isDoctor ? tabs.filter((item) => item.id === "rounds" || item.id === "countersigns" || item.id === "vitals") : tabs;
   const loadWards = useCallback(() => {
     apiFetch<WardVoiceWard[]>("/ward-voice/wards").then(setWards).catch((reason) => setError(reason.message));
   }, []);
@@ -520,10 +523,11 @@ export function WardVoice({ role }: { role: string }) {
             </div>
           </section>
         )}
+        {tab === "vitals" && <div className="mt-5 grid gap-4 xl:grid-cols-[380px_1fr]">{patientList((bed) => setSelectedBedId(bed.id))}<WardVitals key={selectedBed?.patient_id || "none"} bed={selectedBed} onChanged={loadPatients} readOnly={isDoctor} /></div>}
         {tab === "capture" && (
           <div className="mt-5 grid gap-4 xl:grid-cols-[380px_1fr]">
             {patientList((bed) => setSelectedBedId(bed.id))}
-            <CapturePanel bed={selectedBed} onConfirmed={loadPatients} />
+            <div className="space-y-4"><CapturePanel key={selectedBed?.patient_id || "none"} bed={selectedBed} onConfirmed={loadPatients} /><WardVitals key={selectedBed?.patient_id || "none"} bed={selectedBed} onChanged={loadPatients} /></div>
           </div>
         )}
         {tab === "fluid" && (

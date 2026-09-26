@@ -183,6 +183,7 @@ export type PatientMedication = {
 };
 
 export type PatientChart = {
+  specialty_documents?: import("./documentation").ClinicalDocument[];
   records: PatientChartRecord[];
   reports: PatientReport[];
   medications: PatientMedication[];

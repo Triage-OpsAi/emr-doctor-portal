@@ -120,6 +120,9 @@ export async function apiFetch<T>(
       : payload.detail;
     throw new Error(detail || `Request failed (${response.status})`);
   }
+  if (!["GET", "HEAD", "OPTIONS"].includes(method) && /^\/(patients|doctor|emr|ward-voice)\//.test(path) && !path.endsWith("/consent-audio")) {
+    window.dispatchEvent(new Event("tricare:clinical-change"));
+  }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }

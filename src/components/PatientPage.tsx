@@ -1,10 +1,14 @@
 "use client";
+import { useClinicalRefresh } from "@/lib/useClinicalRefresh";
 
 import { FormEvent, Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AddMedicationModal, AddRecordModal, Modal, ReportUploadModal, VoiceEncounterModal } from "@/components/PortalApp";
 import { Icon, type IconName } from "@/components/Icon";
 import { TriCareLogo } from "@/components/TriCareLogo";
+import { EncounterTimeline, type TimelineEntry } from "@/components/EncounterTimeline";
+import { DocumentationWorkspace } from "./DocumentationWorkspace";
+import { destinationLabels, type ClinicalDocument } from "@/lib/documentation";
 import { ApprovalDialog } from "@/components/ApprovalDialog";
 import { ConsentDialog } from "@/components/ConsentDialog";
 import { PatientRecordDialog } from "@/components/PatientRecordDialog";
@@ -881,6 +885,7 @@ function EditPatientModal({
 export function PatientPage({ clientName, workspaceId, patientId, visitId }: { clientName: string; workspaceId: string; patientId: string; visitId?: string }) {
   const router = useRouter();
   const chartViewed = useRef(false);
+  const chartRequest = useRef(0);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [patient, setPatient] = useState<PatientDashboardRecord | null>(null);
   const [chart, setChart] = useState<PatientChart | null>(null);
@@ -896,13 +901,16 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
   const [editingTab, setEditingTab] = useState<PatientTab | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, string>>({});
   const [sectionBusy, setSectionBusy] = useState("");
-  const [signingSection, setSigningSection] = useState<PatientTab | null>(null);
+  const [signingSection, setSigningSection] = useState<PatientTab | "all" | null>(null);
   const [showConsents, setShowConsents] = useState(false);
   const [showRecord, setShowRecord] = useState(false);
+  const [documentationOpen, setDocumentationOpen] = useState(false);
+  const [selectedDocument, setSelectedDocument] = useState<ClinicalDocument | undefined>();
 
   const workspacePath = `/${clientName}/${workspaceId}`;
 
   const load = useCallback(async () => {
+    const requestId = ++chartRequest.current;
     try {
       setError("");
       const [workspaceData, patients, chartData] = await Promise.all([
@@ -910,6 +918,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
         apiFetch<PatientDashboardRecord[]>("/doctor/patients"),
         apiFetch<PatientChart>(`/patients/${patientId}/chart${visitId ? `?visit_id=${encodeURIComponent(visitId)}` : ""}`),
       ]);
+      if (requestId !== chartRequest.current) return;
       const selected = patients.find((item) => item.id === patientId);
       if (!selected) throw new Error("Patient was not found in this hospital.");
       setWorkspace(workspaceData);
@@ -920,9 +929,9 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
         queueAuditEvent({ action: "document.viewed", resource_type: "patient_chart", resource_id: patientId, patient_id: patientId });
       }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to load this patient.");
+      if (requestId === chartRequest.current) setError(reason instanceof Error ? reason.message : "Unable to load this patient.");
     } finally {
-      setLoading(false);
+      if (requestId === chartRequest.current) setLoading(false);
     }
   }, [patientId, visitId]);
 
@@ -947,14 +956,17 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
   useEffect(() => {
     if (!encounterQueued) return;
     const check = async () => {
+      const jobs = await apiFetch<VoiceJob[]>("/emr/voice-jobs").catch(() => null);
       await load();
-      const jobs = await apiFetch<VoiceJob[]>("/emr/voice-jobs").catch(() => []);
+      if (!jobs) return;
       const pending = jobs.find((job) => job.patient_id === patientId && !["ready", "failed"].includes(job.status));
       if (!pending) setEncounterQueued(false);
     };
     const handle = window.setInterval(() => void check(), 3000);
     return () => window.clearInterval(handle);
   }, [encounterQueued, load, patientId]);
+
+  useClinicalRefresh(load);
 
   const latest = chart?.records[0] || null;
   const selectedVisit = chart?.selected_visit || null;
@@ -1092,18 +1104,6 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
     }
   }
 
-  async function approveRecord(recordId: string) {
-    setApproving(`record-${recordId}`);
-    setError("");
-    try {
-      await apiFetch(`/emr/records/${recordId}/review`, { method: "POST", body: JSON.stringify({}) });
-      await load();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Unable to approve the patient record.");
-    } finally {
-      setApproving("");
-    }
-  }
 
   async function syncRecord(recordId: string) {
     setApproving(`sync-${recordId}`);
@@ -1225,7 +1225,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
     );
   }
 
-  const isApproved = Boolean(latest && latest.status !== "pending_review");
+  const isApproved = chart.approval_percentage === 100;
   const sidebarActiveLabel: Record<PatientTab, string> = {
     summary: "Overview",
     timeline: "Encounters",
@@ -1386,10 +1386,12 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                   </div>
 
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${!latest ? "bg-amber-50 text-amber-700" : latest.status === "pending_review" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
-                      <span className={`h-2 w-2 rounded-full ${!latest ? "bg-amber-500" : latest.status === "pending_review" ? "bg-red-500" : "bg-emerald-500"}`} />
-                      {!latest ? "Awaiting record" : latest.status === "pending_review" ? "Needs review" : "Approved"}
+                    <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${!latest ? "bg-amber-50 text-amber-700" : !isApproved ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
+                      <span className={`h-2 w-2 rounded-full ${!latest ? "bg-amber-500" : !isApproved ? "bg-red-500" : "bg-emerald-500"}`} />
+                      {!latest ? "Awaiting record" : !isApproved ? "Needs review" : "Approved"}
                     </span>
+                    {workspace.current_user.role.toLowerCase() === "doctor" && workspace.current_user.permissions.includes("emr:review") && <button type="button" onClick={() => setSigningSection("all")} disabled={editingTab !== null} className={actionButton}>Approve all</button>}
+                    {workspace.current_user.permissions.includes("emr:read") && <button type="button" className={actionButton} onClick={() => { setSelectedDocument(undefined); setDocumentationOpen(true); }}><Icon name="mic" size={14} /> WARDVOICE</button>}
                     <button onClick={() => setAction("voice-encounter")} className={primaryButton}>
                       <Icon name={selectedVisit && !latest ? "mic" : "plus"} size={14} /> {selectedVisit && !latest ? "Record this visit" : "New Encounter"}
                     </button>
@@ -1400,8 +1402,8 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                       <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-xl border border-[#e3e9e8] bg-white p-2 shadow-2xl">
                         <button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowConsents(true); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9]"><Icon name="file" size={15} /> Patient consent</button>
                         <button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowRecord(true); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9]"><Icon name="file" size={15} /> View patient report</button>
-                        {latest?.status === "pending_review" && (
-                          <button onClick={() => approveRecord(latest.id)} disabled={Boolean(approving)} className="focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-emerald-600 hover:bg-emerald-50 disabled:opacity-50">
+                        {latest?.status === "pending_review" && workspace.current_user.role.toLowerCase() === "doctor" && workspace.current_user.permissions.includes("emr:review") && (
+                          <button onClick={() => setSigningSection("all")} disabled={Boolean(approving)} className="focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-emerald-600 hover:bg-emerald-50 disabled:opacity-50">
                             <Icon name="shield" size={15} /> {approving === `record-${latest.id}` ? "Approving…" : "Approve patient record"}
                           </button>
                         )}
@@ -1506,6 +1508,8 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                 )}
 
                 <div className={sectionDeleted ? "hidden" : ""}>
+                {!!chart.specialty_documents?.filter(doc => doc.destination === activeTab || activeTab === "timeline").length && <ClinicalSection title="Signed specialty documentation"><div className="grid gap-3 sm:grid-cols-2">{chart.specialty_documents.filter(doc => doc.destination === activeTab || activeTab === "timeline").map(doc => <button type="button" key={doc.id} className="rounded-xl border border-teal-100 bg-teal-50/30 p-4 text-left hover:bg-teal-50" onClick={() => { setSelectedDocument(doc); setDocumentationOpen(true); }}><p className="text-sm font-semibold">{doc.template.title}</p><p className="mt-1 text-xs text-slate-500">{doc.context.encounter.reference} · {destinationLabels[doc.destination]}</p><p className="mt-2 text-xs text-teal-700">Signed by {doc.signer_name} · {doc.signed_at ? new Date(doc.signed_at).toLocaleString() : ""}</p></button>)}</div></ClinicalSection>}
+
                 <div className={activeTab === "summary" ? "mt-5 grid gap-3 md:grid-cols-3" : "hidden"}>
                   <SummaryBox
                     itemKey="chief-complaint"
@@ -1714,51 +1718,32 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
               </div>
 
               {activeTab === "timeline" && <ClinicalSection id="consults" title="Timeline · IPD Consults">
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] text-left text-xs">
-                    <thead>
-                      <tr className="border-y border-[#eef2f1] bg-[#f7f9f9] text-[#9aa7ac]">
-                        <th className="px-3 py-2 font-semibold">Date</th>
-                        <th className="px-3 py-2 font-semibold">Encounter summary</th>
-                        <th className="px-3 py-2 font-semibold">Captured by</th>
-                        <th className="px-3 py-2 font-semibold">Status</th>
-                        <th className="px-3 py-2 font-semibold">Recording</th>
-                        <th className="px-3 py-2 font-semibold">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(selectedVisit ? chart.visits.filter((visit) => visit.id === selectedVisit.id) : chart.visits).filter((visit) => visit.encounter_count === 0).map((visit) => (
-                        <tr key={visit.id} className="border-b border-[#eef2f1] bg-amber-50/40">
-                          <td className="px-3 py-3">{new Date(visit.created_at).toLocaleString()}</td>
-                          <td className="max-w-lg px-3 py-3"><p className="font-medium">{visit.summary}</p>{visit.department && <p className="mt-1 text-[10px] text-[#9aa7ac]">{visit.department}</p>}</td>
-                          <td className="px-3 py-3 text-[#51616b]">{visit.doctor_name}</td>
-                          <td className="px-3 py-3 uppercase text-amber-700">Awaiting record</td>
-                          <td className="px-3 py-3">—</td>
-                          <td className="px-3 py-3"><button type="button" onClick={() => router.push(`${workspacePath}/patient/${patientId}?visit=${encodeURIComponent(visit.id)}`)} className="font-semibold text-[#0c716e] hover:underline">Open visit</button></td>
-                        </tr>
-                      ))}
-                      {chart.records.map((record) => {
-                        const itemKey = `encounter-${record.id}`;
-                        if (itemDeleted("timeline", itemKey)) return null;
-                        const baseValue = record.encounter_summary || record.structured_note?.chief_complaint || "Clinical encounter";
-                        const value = itemValue("timeline", itemKey, baseValue);
-                        return <tr key={record.id} className="border-b border-[#eef2f1]">
-                          <td className="px-3 py-3">{new Date(record.created_at).toLocaleString()}</td>
-                          <td className="max-w-lg px-3 py-3">
-                            <InlineContent editing={editingTab === "timeline"} value={value} onChange={(next) => editValue(itemKey, next)}>
-                              <p className="whitespace-pre-wrap font-medium">{value}</p>
-                            </InlineContent>
-                            {record.department && <p className="mt-1 text-[10px] text-[#9aa7ac]">{record.department}</p>}
-                          </td>
-                          <td className="px-3 py-3 text-[#51616b]">{record.captured_by || patient.doctor_name || workspace.current_user.full_name}</td>
-                          <td className="px-3 py-3 uppercase text-[#0c716e]">{record.status === "pending_review" ? "Needs review" : record.status === "synced_to_emr" ? "Synced" : record.status.replaceAll("_", " ")}</td>
-                          <td className="px-3 py-3">{record.audio_available ? <button onClick={() => listen(record.id)} className="text-[#0c716e] hover:underline">Listen</button> : "—"}</td>
-                          <td className="px-3 py-3">{!sectionReview("timeline")?.is_approved && <SmallDeleteButton onClick={() => void deleteTabItem("timeline", itemKey, "encounter")} />}</td>
-                        </tr>
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                <EncounterTimeline entries={[
+                  ...(selectedVisit ? chart.visits.filter(visit => visit.id === selectedVisit.id) : chart.visits).filter(visit => visit.encounter_count === 0).map(visit => ({
+                    id: `visit-${visit.id}`, date: visit.created_at, department: visit.department,
+                    clinician: visit.doctor_name, status: "awaiting_record", summary: visit.summary || "Awaiting encounter notes.",
+                    actions: <button type="button" onClick={() => router.push(`${workspacePath}/patient/${patientId}?visit=${encodeURIComponent(visit.id)}`)} className={actionButton}>Open visit <Icon name="chevron" size={13} /></button>,
+                  })),
+                  ...chart.records.filter(record => !itemDeleted("timeline", `encounter-${record.id}`)).map((record): TimelineEntry => {
+                    const itemKey = `encounter-${record.id}`;
+                    const value = itemValue("timeline", itemKey, record.encounter_summary || record.structured_note?.chief_complaint || "Clinical encounter");
+                    const note = record.structured_note;
+                    return {
+                      id: record.id, date: record.created_at, department: record.department, clinician: record.captured_by,
+                      status: record.status,
+                      summary: <InlineContent editing={editingTab === "timeline"} value={value} onChange={next => editValue(itemKey, next)}><p className="whitespace-pre-wrap">{value}</p></InlineContent>,
+                      recording: record.audio_available ? <button type="button" onClick={() => void listen(record.id)} disabled={Boolean(audioLoading)} className="focus-ring inline-flex items-center gap-2 rounded-lg py-2 text-xs font-semibold text-[#00856b] disabled:opacity-50"><Icon name="play" size={18} />{audioLoading === record.id ? "Loading…" : "Listen recording"}</button> : undefined,
+                      actions: !sectionReview("timeline")?.is_approved ? <details className="relative"><summary aria-label="Encounter actions" className="focus-ring cursor-pointer list-none rounded-lg px-3 py-2 text-lg text-[#426780] hover:bg-white">⋮</summary><div className="absolute right-0 top-full z-10 rounded-xl border border-[#dce9ed] bg-white p-3 shadow-lg"><SmallDeleteButton onClick={() => void deleteTabItem("timeline", itemKey, "encounter")} /></div></details> : undefined,
+                      details: note ? [
+                        { label: "Chief complaint", value: note.chief_complaint },
+                        { label: "History", value: note.subjective },
+                        { label: "Examination", value: note.objective },
+                        { label: "Assessment", value: note.assessment },
+                        { label: "Plan", value: note.plan },
+                      ].filter(detail => Boolean(detail.value?.trim())) : [],
+                    };
+                  }),
+                ]} />
               </ClinicalSection>}
 
               {activeTab === "diagnoses" && <ClinicalSection id="diagnosis" title="Diagnoses">
@@ -2164,6 +2149,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
 
       {signingSection && <ApprovalDialog patientId={patient.id} visitId={selectedVisit?.id} section={signingSection} signerName={workspace?.current_user.full_name || "Current user"} onClose={() => setSigningSection(null)} onSigned={() => { setSigningSection(null); void load(); }} />}
       {showConsents && <ConsentDialog key={patient.id} patientId={patient.id} patientName={patient.patient_name} visitId={selectedVisit?.id} clinicianName={workspace?.current_user.full_name || "Current user"} canCreate={Boolean(workspace?.current_user.permissions.includes("emr:create"))} onClose={() => setShowConsents(false)} />}
+      {documentationOpen && <DocumentationWorkspace patientId={patient.id} visitId={selectedVisit?.id} initialDocument={selectedDocument} canWrite={workspace.current_user.permissions.includes("emr:create")} canSign={workspace.current_user.role.toLowerCase() === "doctor" && workspace.current_user.permissions.includes("emr:review")} onClose={() => setDocumentationOpen(false)} onSaved={() => void load()} />}
       {showRecord && <PatientRecordDialog patientId={patient.id} onClose={() => setShowRecord(false)} />}
       {action === "report" && <ReportUploadModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "record" && <AddRecordModal patientId={patient.id} visitId={selectedVisit?.id} onClose={() => setAction(null)} onDone={() => void load()} />}

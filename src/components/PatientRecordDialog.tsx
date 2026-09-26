@@ -40,7 +40,7 @@ import { SignatureImage, type Signature } from "./SignaturePad";
 import type { Consent } from "./ConsentDialog";
 
 type Attestation = { id: string; section_key: string; visit_id: string | null; signature: Signature; signer_name: string; signer_role: string; signed_at: string; revision: string; snapshot: Record<string, unknown> };
-type Bundle = { patient: { id: string; name: string; gender?: string; date_of_birth?: string; phone?: string; patient_reference?: string }; generated_at: string; original_entries: unknown; ward_entries: Record<string, unknown>;
+type Bundle = { specialty_documents?: import("@/lib/documentation").ClinicalDocument[]; patient: { id: string; name: string; gender?: string; date_of_birth?: string; phone?: string; patient_reference?: string }; generated_at: string; vitals?: unknown[]; encounter_timeline?: unknown[]; original_entries: unknown; ward_entries: Record<string, unknown>;
   sections: { key: string; snapshot: Record<string, unknown>; attestation: Attestation | null }[]; consents: Consent[]; attestations: Attestation[] };
 type Page = { title: string; text: string; signatures: { name: string; signature: Signature }[]; status: string; signedAt?: string; revision?: string };
 
@@ -77,6 +77,14 @@ export function PatientRecordDialog({ patientId, onClose }: { patientId: string;
       await document.fonts.ready;
       if (!active) return;
       const sections: Page[] = [];
+      const clinicalSign = value.sections.find(section => section.key === "clinical")?.attestation;
+      const timelineSign = value.sections.find(section => section.key === "timeline")?.attestation;
+      const signedPage = (signed: Attestation | null | undefined) => ({signatures:signed ? [{name:signed.signer_name,signature:signed.signature}] : [],signedAt:signed?.signed_at,revision:signed?.revision});
+      if (value.vitals?.length) sections.push({title:"Vitals and blood sugar",text:readableRecord(value.vitals),...signedPage(clinicalSign),status:"Confirmed ward observations · review status shown per reading"});
+      if (value.encounter_timeline?.length) sections.push({title:"Encounter timeline",text:readableRecord(value.encounter_timeline),...signedPage(timelineSign),status:"All recorded encounters in chronological order"});
+      for (const doc of value.specialty_documents || []) sections.push({ title: doc.template.title,
+        text: [`Patient: ${doc.context.name}`, `Reference: ${doc.context.reference}`, `Encounter: ${doc.context.encounter.reference}`, `Department: ${doc.context.encounter.department || doc.template.specialty}`, ...doc.template.fields.map(field => `${field.label}: ${doc.fields[field.key]?.value || "Not documented"}`), ...Object.entries(doc.reviewed_checks).map(([key, reason]) => `Documentation check · ${key.replaceAll("_", " ")}: ${reason}`)].join("\n\n"),
+        signatures: doc.signature ? [{ name: doc.signer_name || "Doctor", signature: doc.signature }] : [], status: "Finalized specialty documentation", signedAt: doc.signed_at || undefined, revision: doc.signed_digest || undefined });
       for (const section of value.sections) {
         const signed = section.attestation;
         sections.push({ title: section.key, text: readableRecord(section.snapshot), signatures: signed ? [{ name: `${signed.signer_name} · ${signed.signer_role}`, signature: signed.signature }] : [],
