@@ -10,7 +10,7 @@ export function SignatureImage({ signature, label = "Signature" }: { signature: 
   </svg>;
 }
 
-export function SignaturePad({ label, onChange }: { label: string; onChange: (signature: Signature | null) => void }) {
+export function SignaturePad({ label, onChange, hint = "Sign below using a mouse, finger, or stylus.", clearLabel = "Clear signature" }: { label: string; onChange: (signature: Signature | null) => void; hint?: string; clearLabel?: string }) {
   const [strokes, setStrokes] = useState<[number, number][][]>([]);
   const current = useRef<[number, number][]>([]);
   const active = useRef<number | null>(null);
@@ -30,13 +30,13 @@ export function SignaturePad({ label, onChange }: { label: string; onChange: (si
     onChange(valid ? { strokes: completed.current } : null);
   }
   return <fieldset className="space-y-2"><legend className="text-sm font-semibold">{label}</legend>
-    <p className="text-xs text-slate-500">Sign below using a mouse, finger, or stylus.</p>
+    <p className="text-xs text-slate-500">{hint}</p>
     <svg viewBox="0 0 600 180" preserveAspectRatio="none" role="img" aria-label={`${label} drawing area`} className="h-36 w-full touch-none rounded-lg border border-slate-300 bg-white"
       onPointerDown={event => { if (active.current !== null || completed.current.length >= 100) return; event.currentTarget.setPointerCapture(event.pointerId); active.current = event.pointerId; current.current = [point(event)]; }}
       onPointerMove={event => { if (active.current !== event.pointerId || completed.current.flat().length + current.current.length >= 12000) return; current.current.push(point(event)); setStrokes([...completed.current, [...current.current]]); }}
       onPointerUp={finish} onPointerCancel={event => { active.current = null; current.current = []; setStrokes([...completed.current]); event.currentTarget.releasePointerCapture(event.pointerId); }}>
       {strokes.map((stroke, index) => <polyline key={index} points={stroke.map(([x, y]) => `${x * 600},${y * 180}`).join(" ")} fill="none" stroke="#172b3a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />)}
     </svg>
-    <button type="button" className="text-sm text-teal-700 underline" onClick={() => { completed.current = []; current.current = []; active.current = null; setStrokes([]); onChange(null); }}>Clear signature</button>
+    <button type="button" className="text-sm text-teal-700 underline" onClick={() => { completed.current = []; current.current = []; active.current = null; setStrokes([]); onChange(null); }}>{clearLabel}</button>
   </fieldset>;
 }

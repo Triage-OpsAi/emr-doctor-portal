@@ -1357,7 +1357,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
             {/* Primary card ------------------------------------------------ */}
             <div className="overflow-hidden rounded-xl border border-[#dfe7e6] bg-white shadow-[0_6px_24px_rgba(35,58,55,.05)]">
               <div id="visit" className="scroll-mt-24 px-5 py-5 sm:px-7">
-                <div className="grid gap-5 lg:grid-cols-[1fr_auto]">
+                <div className="grid min-w-0 gap-5">
                   <div className="flex gap-4">
                     <span className="grid h-16 w-16 shrink-0 place-items-center rounded-full bg-[#eef5f3] text-2xl font-semibold text-[#0c716e]">{patient.patient_name.slice(0, 1).toUpperCase()}</span>
                     <div>
@@ -1368,7 +1368,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                       <p className="mt-1 text-xs text-[#829096]">
                         {patient.gender || "Gender not recorded"} · Age {patient.age ?? "—"} · ID {patient.patient_reference}
                       </p>
-                      <div className="mt-3 grid gap-x-7 gap-y-1.5 text-xs sm:grid-cols-2 xl:grid-cols-4">
+                      <div className="mt-3 grid gap-x-6 gap-y-3 text-xs sm:grid-cols-2">
                         <p>
                           <span className="text-[#9aa7ac]">Visit Number:</span> {selectedVisit ? `Visit ${selectedVisit.visit_number}${selectedVisit.encounter_number ? ` · ${selectedVisit.encounter_number}` : ""}` : patient.encounter_number || latest?.encounter_id.slice(0, 10).toUpperCase() || "—"}
                         </p>
@@ -1385,9 +1385,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-start justify-end gap-2">
-                    <button type="button" onClick={() => setShowRecord(true)} className={actionButton}>View patient record</button>
-                    <button type="button" onClick={() => setShowConsents(true)} className={actionButton}>Department consent</button>
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className={`inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold ${!latest ? "bg-amber-50 text-amber-700" : latest.status === "pending_review" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"}`}>
                       <span className={`h-2 w-2 rounded-full ${!latest ? "bg-amber-500" : latest.status === "pending_review" ? "bg-red-500" : "bg-emerald-500"}`} />
                       {!latest ? "Awaiting record" : latest.status === "pending_review" ? "Needs review" : "Approved"}
@@ -1400,6 +1398,8 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
                         ••• <span className="sr-only">Patient actions</span>
                       </summary>
                       <div className="absolute right-0 z-20 mt-2 w-64 overflow-hidden rounded-xl border border-[#e3e9e8] bg-white p-2 shadow-2xl">
+                        <button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowConsents(true); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9]"><Icon name="file" size={15} /> Patient consent</button>
+                        <button type="button" onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); setShowRecord(true); }} className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-[#51616b] hover:bg-[#f7f9f9]"><Icon name="file" size={15} /> View patient report</button>
                         {latest?.status === "pending_review" && (
                           <button onClick={() => approveRecord(latest.id)} disabled={Boolean(approving)} className="focus-ring flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-xs text-emerald-600 hover:bg-emerald-50 disabled:opacity-50">
                             <Icon name="shield" size={15} /> {approving === `record-${latest.id}` ? "Approving…" : "Approve patient record"}
@@ -2163,7 +2163,7 @@ export function PatientPage({ clientName, workspaceId, patientId, visitId }: { c
       </div>
 
       {signingSection && <ApprovalDialog patientId={patient.id} visitId={selectedVisit?.id} section={signingSection} signerName={workspace?.current_user.full_name || "Current user"} onClose={() => setSigningSection(null)} onSigned={() => { setSigningSection(null); void load(); }} />}
-      {showConsents && <ConsentDialog patientId={patient.id} patientName={patient.patient_name} visitId={selectedVisit?.id} clinicianName={workspace?.current_user.full_name || "Current user"} canCreate={Boolean(workspace?.current_user.permissions.includes("emr:create"))} onClose={() => setShowConsents(false)} />}
+      {showConsents && <ConsentDialog key={patient.id} patientId={patient.id} patientName={patient.patient_name} visitId={selectedVisit?.id} clinicianName={workspace?.current_user.full_name || "Current user"} canCreate={Boolean(workspace?.current_user.permissions.includes("emr:create"))} onClose={() => setShowConsents(false)} />}
       {showRecord && <PatientRecordDialog patientId={patient.id} onClose={() => setShowRecord(false)} />}
       {action === "report" && <ReportUploadModal patientId={patient.id} onClose={() => setAction(null)} onDone={() => void load()} />}
       {action === "record" && <AddRecordModal patientId={patient.id} visitId={selectedVisit?.id} onClose={() => setAction(null)} onDone={() => void load()} />}

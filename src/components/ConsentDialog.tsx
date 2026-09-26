@@ -1,144 +1,77 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { useConsentAudio, splitConsentAudio } from "@/lib/useConsentAudio";
 import { apiFetch } from "@/lib/api";
+import { consentAudio, hasEntry, type Choice, type Context, type DemoForm, type Entry, type Field, type Language } from "@/lib/demo-consent";
 import { ClinicalDialog } from "./ClinicalDialog";
-import { SignatureImage, SignaturePad, type Signature } from "./SignaturePad";
+import { DemoConsentPaper } from "./DemoConsentPaper";
+import { LegacyConsentDialog, type Consent as LegacyConsent } from "./LegacyConsentDialog";
 import type { Department } from "./DepartmentManager";
-import { readableRecord } from "@/lib/clinical-record";
+import type { Signature } from "./SignaturePad";
 
-const fields = [
-  ["procedure", "Procedure / treatment", "प्रक्रिया / उपचार"], ["purpose", "Why it is needed", "इसकी आवश्यकता क्यों है"],
-  ["benefits", "Expected benefits", "अपेक्षित लाभ"], ["risks", "Material risks and patient-specific risks", "महत्वपूर्ण और रोगी-विशिष्ट जोखिम"],
-  ["alternatives", "Alternatives, including no treatment", "विकल्प, उपचार न कराना भी"], ["refusal", "Consequences of refusal and withdrawal", "मना करने और सहमति वापस लेने के परिणाम"],
-] as const;
-type Field = typeof fields[number][0];
-type Language = "en" | "hi";
-type Texts = Record<Field, Record<Language, string>>;
-const rights = {
-  en: "You may ask questions, refuse, or withdraw consent. Signing does not guarantee a particular result. Please tell the care team if anything is unclear.",
-  hi: "आप प्रश्न पूछ सकते हैं, मना कर सकते हैं या सहमति वापस ले सकते हैं। हस्ताक्षर किसी विशेष परिणाम की गारंटी नहीं हैं। यदि कुछ स्पष्ट नहीं है, तो कृपया देखभाल टीम को बताएं।",
-};
-export type Consent = { id: string; department_name: string; clinician_name: string; signed_at: string; revision: string; withdrawn_at: string | null; withdrawal_reason: string | null; form: Texts & { patient_name: string; decision: string; language: Language; signer_name: string; signer_type: string; relationship: string; witness_name: string; patient_signature: Signature; clinician_signature: Signature; witness_signature?: Signature } };
+export type Consent = Omit<LegacyConsent, "form"> & { form: LegacyConsent["form"] & { demo?: DemoForm } };
+type Props = { patientId: string; patientName: string; visitId?: string; clinicianName: string; canCreate: boolean; onClose: () => void };
 
-export function ConsentDialog({ patientId, patientName, visitId, clinicianName, canCreate, onClose }: { patientId: string; patientName: string; visitId?: string; clinicianName: string; canCreate: boolean; onClose: () => void }) {
+export function ConsentDialog(props: Props) {
+  const { patientId, visitId, canCreate, onClose } = props;
+  const [context, setContext] = useState<Context | null>(null);
+  const [form, setForm] = useState<DemoForm | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [departmentId, setDepartmentId] = useState("");
   const [consents, setConsents] = useState<Consent[]>([]);
-  const [texts, setTexts] = useState<Texts>(() => Object.fromEntries(fields.map(([key]) => [key, { en: "", hi: "" }])) as Texts);
   const [language, setLanguage] = useState<Language>("en");
+  const [creating, setCreating] = useState(canCreate);
   const [reviewing, setReviewing] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [patientSignature, setPatientSignature] = useState<Signature | null>(null);
-  const [clinicianSignature, setClinicianSignature] = useState<Signature | null>(null);
-  const [witnessSignature, setWitnessSignature] = useState<Signature | null>(null);
-  const [signerName, setSignerName] = useState(patientName);
-  const [signerType, setSignerType] = useState("patient");
-  const [relationship, setRelationship] = useState("");
-  const [representativeReason, setRepresentativeReason] = useState("");
-  const [witnessName, setWitnessName] = useState("");
-  const [decision, setDecision] = useState("accepted");
-  const [signatureVersion, setSignatureVersion] = useState(0);
   const [confirmed, setConfirmed] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [speaking, setSpeaking] = useState(false);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const playback = useRef(0);
-  const finishPlayback = useRef<(() => void) | null>(null);
-  const [withdrawId, setWithdrawId] = useState<string | null>(null);
-  const [withdrawReason, setWithdrawReason] = useState("");
+  const [signatureVersion, setSignatureVersion] = useState(0);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [legacy, setLegacy] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const audioPlayback = useConsentAudio(patientId);
+  const { stop: stopAudio, preload } = audioPlayback;
+  const speaking = audioPlayback.state !== "idle";
+  const [withdrawId, setWithdrawId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const blank = (data: Context): DemoForm => ({...data, fields:structuredClone(data.prefill || {}),language:"en",data_decision:null,procedure_decision:null,patient_signature:null,clinician_signature:null,witness_signature:null});
   useEffect(() => {
     let active = true;
-    Promise.all([apiFetch<Department[]>("/doctor/departments"), apiFetch<Consent[]>(`/patients/${patientId}/consents`), apiFetch<{ department_id: string | null }>("/doctor/my-department")])
-      .then(([rows, saved, mine]) => { if (active) { setDepartments(rows); setConsents(saved); setDepartmentId(mine.department_id || ""); } })
-      .catch(reason => { if (active) setError(reason.message); });
-    // The mutable playback generation cancels whichever audio is active at unmount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    return () => { active = false; playback.current++; audio.current?.pause(); finishPlayback.current?.(); };
+    Promise.all([apiFetch<Context>(`/patients/${patientId}/consent-template`), apiFetch<Department[]>("/doctor/departments"), apiFetch<{department_id:string|null}>("/doctor/my-department"),apiFetch<Consent[]>(`/patients/${patientId}/consents`)])
+      .then(([data, rows, mine, saved]) => {if(active){setContext(data);setForm(blank(data));setDepartments(rows.filter(row => row.is_active));setDepartmentId(mine.department_id && rows.some(row=>row.id===mine.department_id && row.is_active) ? mine.department_id : "");setConsents(saved);}})
+      .catch(e => {if(active)setError(e instanceof Error ? e.message : "Unable to load consent form");});
+    return () => {active=false;};
   }, [patientId]);
-  function stopAudio() { playback.current++; audio.current?.pause(); finishPlayback.current?.(); setSpeaking(false); }
-  async function play() {
-    stopAudio(); const generation = playback.current; setSpeaking(true); setError("");
-    const text = fields.map(([key, en, hi]) => `${language === "en" ? en : hi}. ${texts[key][language]}`).join("\n\n") + "\n\n" + rights[language];
-    const chunks: string[] = [];
-    let remainder = text;
-    while (remainder.length) {
-      let end = Math.min(2300, remainder.length);
-      if (end < remainder.length) { const space = remainder.lastIndexOf(" ", end); if (space > 0) end = space; }
-      chunks.push(remainder.slice(0, end)); remainder = remainder.slice(end).trimStart();
-    }
-    try {
-      for (const chunk of chunks) {
-        if (generation !== playback.current) return;
-        const result = await apiFetch<{ audios: string[] }>(`/patients/${patientId}/consent-audio`, { method: "POST", body: JSON.stringify({ text: chunk, language }) });
-        for (const encoded of result.audios) {
-          if (generation !== playback.current) return;
-          const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-          const url = URL.createObjectURL(new Blob([bytes], { type: "audio/wav" }));
-          try {
-            const player = new Audio(url); audio.current = player;
-            await new Promise<void>((resolve, reject) => { finishPlayback.current = resolve; player.onended = () => resolve(); player.onerror = () => reject(new Error("Unable to play audio on this device")); void player.play().catch(reject); });
-          } finally { URL.revokeObjectURL(url); }
-        }
-      }
-    } catch (reason) { if (generation === playback.current) setError(reason instanceof Error ? reason.message : "Audio unavailable. Please read the form aloud."); }
-    finally { if (generation === playback.current) setSpeaking(false); }
+  function resetSignatures() {setConfirmed(false);setSignatureVersion(v=>v+1);setForm(f=>f?{...f,patient_signature:null,clinician_signature:null,witness_signature:null}:f);}
+  function field(key: Field, value: Entry) {stopAudio();setForm(f=>f?{...f,fields:{...f.fields,[key]:value}}:f);}
+  function choice(key: "data_decision" | "procedure_decision", value: Choice) {stopAudio();setForm(f=>f?{...f,[key]:value}:f);}
+  function signature(key: "patient_signature" | "clinician_signature" | "witness_signature", value: Signature | null) {setForm(f=>f?{...f,[key]:value}:f);}
+  function play(value: DemoForm) { setError(""); return audioPlayback.play(consentAudio(value, language), language); }
+  async function save(){
+    if(!form)return;setBusy(true);setError("");stopAudio();
+    try{const saved=await apiFetch<Consent>(`/patients/${patientId}/consents/form`,{method:"POST",body:JSON.stringify({template_version:form.template.version,department_id:departmentId,visit_id:visitId||null,language,fields:form.fields,data_decision:form.data_decision,procedure_decision:form.procedure_decision,patient_signature:form.patient_signature,clinician_signature:form.clinician_signature,witness_signature:form.witness_signature,confirmed})});setConsents(rows=>[saved,...rows]);setCreating(false);setReviewing(false);setExpanded(saved.id);document.querySelector("dialog[open]")?.scrollTo({top:0});}
+    catch(e){setError(e instanceof Error?e.message:"Unable to save consent");}finally{setBusy(false);}
   }
-  async function save() {
-    if (!patientSignature || !clinicianSignature || !confirmed) return;
-    setBusy(true); setError(""); stopAudio();
-    try {
-      const saved = await apiFetch<Consent>(`/patients/${patientId}/consents`, { method: "POST", body: JSON.stringify({ ...texts, department_id: departmentId, visit_id: visitId || null,
-        language, signer_name: signerName, signer_type: signerType, relationship, representative_reason: representativeReason,
-        witness_name: witnessName, witness_signature: witnessSignature, decision, patient_signature: patientSignature,
-        clinician_signature: clinicianSignature, explained_and_questions_answered: true, bilingual_content_reviewed: true }) });
-      setConsents(current => [saved, ...current]); setCreating(false); setReviewing(false); setExpanded(saved.id);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to save consent"); }
-    finally { setBusy(false); }
-  }
-  async function withdraw() {
-    if (!withdrawId) return;
-    setBusy(true); setError("");
-    try { const updated = await apiFetch<Consent>(`/patients/${patientId}/consents/${withdrawId}/withdraw`, { method: "POST", body: JSON.stringify({ reason: withdrawReason }) }); setConsents(rows => rows.map(row => row.id === updated.id ? updated : row)); setWithdrawId(null); setWithdrawReason(""); }
-    catch (reason) { setError(reason instanceof Error ? reason.message : "Unable to record withdrawal"); }
-    finally { setBusy(false); }
-  }
-  const ready = departmentId && fields.every(([key]) => texts[key].en.trim().length >= 2 && texts[key].hi.trim().length >= 2);
-  function resetSignatures() { setPatientSignature(null); setClinicianSignature(null); setWitnessSignature(null); setConfirmed(false); setSignatureVersion(value => value + 1); }
-  return <ClinicalDialog title={`Patient consent · ${patientName}`} onClose={() => { if (!busy) { stopAudio(); onClose(); } }}><div className="space-y-5 p-6">
-    {error && <p role="alert" className="rounded bg-red-50 p-3 text-red-700">{error}</p>}
-    {!creating ? <>
-      {canCreate && <button type="button" onClick={() => { setCreating(true); setConfirmed(false); setPatientSignature(null); setClinicianSignature(null); setWitnessSignature(null); }} className="rounded bg-teal-700 px-4 py-2 text-white">New department consent</button>}
-      <p className="text-sm text-slate-600">Procedure-specific consent is available for every department. Record it before relevant invasive procedures, surgery, anaesthesia, transfusion, or other treatments requiring consent under hospital policy.</p>
-      {!consents.length && <p>No consent forms recorded.</p>}
-      {consents.map(consent => <article key={consent.id} className="space-y-3 rounded-lg border p-4"><h3 className="font-semibold">{consent.department_name} · {consent.form.procedure[consent.form.language]}</h3><p className="text-sm">{consent.withdrawn_at ? "Withdrawn" : consent.form.decision === "accepted" ? "Consent recorded" : "Declined"} · {new Date(consent.signed_at).toLocaleString()} · {consent.form.signer_name}</p>
-        <button className="text-teal-700 underline" onClick={() => setExpanded(expanded === consent.id ? null : consent.id)}>View signed form</button>
-        {expanded === consent.id && <><pre className="whitespace-pre-wrap font-sans text-sm">{readableRecord(consent.form)}</pre><div className="flex flex-wrap gap-8"><div><p>Patient / representative</p><SignatureImage signature={consent.form.patient_signature} /></div><div><p>{consent.clinician_name}</p><SignatureImage signature={consent.form.clinician_signature} /></div>{consent.form.witness_signature && <div><p>Witness: {consent.form.witness_name}</p><SignatureImage signature={consent.form.witness_signature} /></div>}</div></>}
-        {consent.withdrawn_at && <p className="text-sm">Withdrawal: {consent.withdrawal_reason} · {new Date(consent.withdrawn_at).toLocaleString()}</p>}
-        {canCreate && !consent.withdrawn_at && consent.form.decision === "accepted" && <button className="ml-4 text-red-700 underline" onClick={() => setWithdrawId(consent.id)}>Record withdrawal</button>}
-        {withdrawId === consent.id && <div className="flex flex-wrap gap-2"><input aria-label="Reason for withdrawal" minLength={3} maxLength={2000} value={withdrawReason} onChange={e => setWithdrawReason(e.target.value)} className="rounded border p-2" placeholder="Patient’s reason / request" /><button disabled={busy || withdrawReason.trim().length < 3} onClick={() => void withdraw()} className="rounded border p-2">Confirm withdrawal</button><button onClick={() => setWithdrawId(null)}>Cancel</button></div>}
-      </article>)}
-    </> : !reviewing ? <>
-      <p className="text-sm">Prepare both versions using your hospital’s approved wording. Explain the patient-specific risks and alternatives before asking for a signature.</p>
-      <label className="block text-sm">Concerned department<select required value={departmentId} onChange={e => setDepartmentId(e.target.value)} className="mt-1 block w-full rounded border p-2"><option value="">Select department</option>{departments.filter(d => d.is_active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-      {!departments.length && <p className="text-amber-700">A workspace administrator must add departments in Users first.</p>}
-      {fields.map(([key, en, hi]) => <fieldset key={key} className="grid gap-3 rounded border p-3 md:grid-cols-2"><legend className="px-1 font-semibold">{en}</legend><label className="text-sm">English<textarea lang="en" value={texts[key].en} maxLength={3000} onChange={e => setTexts({ ...texts, [key]: { ...texts[key], en: e.target.value } })} rows={3} className="mt-1 w-full rounded border p-2" /></label><label className="text-sm">{hi}<textarea lang="hi" value={texts[key].hi} maxLength={3000} onChange={e => setTexts({ ...texts, [key]: { ...texts[key], hi: e.target.value } })} rows={3} className="mt-1 w-full rounded border p-2" /></label></fieldset>)}
-      <div className="grid gap-3 md:grid-cols-2"><label>Signing as<select value={signerType} onChange={e => setSignerType(e.target.value)} className="block w-full rounded border p-2"><option value="patient">Patient</option><option value="representative">Authorized representative</option></select></label><label>Signer name<input value={signerName} maxLength={200} onChange={e => setSignerName(e.target.value)} className="block w-full rounded border p-2" /></label></div>
-      {signerType === "representative" && <div className="grid gap-3 md:grid-cols-2"><label>Relationship<input value={relationship} maxLength={200} onChange={e => setRelationship(e.target.value)} className="block w-full rounded border p-2" /></label><label>Why the representative is signing<input value={representativeReason} maxLength={1000} onChange={e => setRepresentativeReason(e.target.value)} className="block w-full rounded border p-2" /></label></div>}
-      <label className="block">Witness name {signerType === "representative" ? "(required)" : "(if needed)"}<input value={witnessName} maxLength={200} onChange={e => setWitnessName(e.target.value)} className="block w-full rounded border p-2" /></label>
-      <div className="flex gap-3"><button disabled={!ready || signerName.trim().length < 2 || (signerType === "representative" && (!relationship.trim() || !representativeReason.trim() || !witnessName.trim()))} onClick={() => { setReviewing(true); setConfirmed(false); setPatientSignature(null); setClinicianSignature(null); setWitnessSignature(null); }} className="rounded bg-teal-700 px-4 py-2 text-white disabled:opacity-40">Read with patient</button><button onClick={() => setCreating(false)}>Cancel</button></div>
-    </> : <>
-      <div className="flex flex-wrap items-center gap-3"><label>Read and listen in <select value={language} onChange={e => { stopAudio(); setLanguage(e.target.value as Language); resetSignatures(); }} className="rounded border p-2"><option value="en">English</option><option value="hi">हिन्दी</option></select></label><button type="button" className="rounded border px-4 py-2" onClick={() => speaking ? stopAudio() : void play()}>{speaking ? "Stop audio" : "Play consent audio"}</button></div>
-      <div lang={language} className="space-y-5 rounded-xl border bg-slate-50 p-5"><h3 className="text-xl font-semibold">{language === "en" ? "Informed consent" : "सूचित सहमति"}</h3><p>{patientName} · {departments.find(d => d.id === departmentId)?.name}</p>{fields.map(([key, en, hi]) => <section key={key}><h4 className="font-semibold">{language === "en" ? en : hi}</h4><p className="mt-1 whitespace-pre-wrap leading-7">{texts[key][language]}</p></section>)}<p className="border-t pt-4">{rights[language]}</p></div>
-      <p className="text-sm">Signer: {signerName}{signerType === "representative" ? ` · ${relationship} · ${representativeReason}` : ""}</p>
-      <label className="block">Patient’s decision / रोगी का निर्णय<select value={decision} onChange={e => { setDecision(e.target.value); resetSignatures(); }} className="ml-3 rounded border p-2"><option value="accepted">I consent / मैं सहमत हूँ</option><option value="declined">I decline / मैं मना करता/करती हूँ</option></select></label>
-      <SignaturePad key={`patient-${signatureVersion}`} label="Patient / representative signature · रोगी / प्रतिनिधि के हस्ताक्षर" onChange={setPatientSignature} />
-      {witnessName.trim() && <SignaturePad key={`witness-${signatureVersion}`} label={`Witness signature · ${witnessName}`} onChange={setWitnessSignature} />}
-      <SignaturePad key={`clinician-${signatureVersion}`} label={`Clinician / staff signature · ${clinicianName}`} onChange={setClinicianSignature} />
-      <label className="flex gap-2 text-sm"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />I reviewed both language versions for accuracy, explained the procedure and choices, and answered the patient’s questions.</label>
-      <div className="flex gap-4"><button disabled={busy || !confirmed || !patientSignature || !clinicianSignature || (!!witnessName.trim() && !witnessSignature)} onClick={() => void save()} className="rounded bg-teal-700 px-5 py-3 text-white disabled:opacity-40">{busy ? "Saving…" : "Save signed decision"}</button><button disabled={busy} onClick={() => { stopAudio(); setReviewing(false); }}>Edit form and sign again</button></div>
-    </>}
-  </div></ClinicalDialog>;
+  async function withdraw(){if(!withdrawId)return;setBusy(true);setError("");try{const updated=await apiFetch<Consent>(`/patients/${patientId}/consents/${withdrawId}/withdraw`,{method:"POST",body:JSON.stringify({reason})});setConsents(rows=>rows.map(row=>row.id===updated.id?updated:row));setWithdrawId(null);setReason("");}catch(e){setError(e instanceof Error?e.message:"Unable to record withdrawal");}finally{setBusy(false);}}
+  const t=context?.template[language];
+  const ready=!!form && !!departmentId && !!form.data_decision && !!form.procedure_decision && (["patient_name","representative_name","clinician_name","procedure","purpose"] as Field[]).every(key=>hasEntry(form.fields[key]));
+  const witnessValid=!!form && hasEntry(form.fields.witness_name)===!!form.witness_signature && (!hasEntry(form.fields.witness_date)||!!form.witness_signature);
+  const selected=creating?form:consents.find(row=>row.id===expanded)?.form.demo;
+  const openingAudio = selected ? splitConsentAudio(consentAudio(selected, language))[0] : "";
+  useEffect(() => {
+    if (!openingAudio || legacy) return;
+    const timer = window.setTimeout(() => preload(openingAudio, language), 150);
+    return () => window.clearTimeout(timer);
+  }, [openingAudio, language, legacy, preload]);
+  if(legacy)return <LegacyConsentDialog {...props} canCreate={false} onClose={()=>setLegacy(false)} />;
+  return <ClinicalDialog title="Patient consent / रोगी सहमति" onClose={()=>{if(!busy){stopAudio();onClose();}}}>
+    <div className="border-b bg-white px-5 py-4 sm:px-8"><div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2 rounded-lg bg-slate-100 p-1">{(["en","hi"] as const).map(lang=><button key={lang} type="button" disabled={busy} aria-pressed={language===lang} onClick={()=>{stopAudio();setLanguage(lang);if(creating)resetSignatures();}} className={`rounded-md px-4 py-2 text-sm font-semibold ${language===lang?"bg-white text-teal-800 shadow-sm":"text-slate-500"}`}>{lang==="en"?"English":"हिन्दी"}</button>)}</div><div className="flex gap-3"><button type="button" disabled={!selected} onClick={()=>{if(speaking)stopAudio();else if(selected)void play(selected);}} className="rounded-lg border border-teal-200 px-4 py-2 text-sm font-semibold text-teal-800 disabled:opacity-40">{audioPlayback.state==="loading"?(language==="en"?"Preparing audio · Cancel":"ऑडियो तैयार हो रहा है · रोकें"):speaking?(language==="en"?"Stop audio":"ऑडियो रोकें"):(language==="en"?"▶ Listen in English":"▶ हिन्दी में सुनें")}</button><button type="button" disabled={busy} onClick={()=>{stopAudio();setCreating(canCreate ? !creating : false);setError("");if(!creating && context){setForm(blank(context));setReviewing(false);setConfirmed(false);setSignatureVersion(v=>v+1);}}} className="text-sm font-semibold text-teal-800 disabled:opacity-40">{creating?`Saved forms (${consents.length})`:canCreate?"New form":"Saved forms"}</button></div></div>{t && <p className="mt-3 text-xs leading-5 text-slate-500">{t.audio_hint}</p>}</div>
+    <div className="bg-[#edf2f0] p-3 sm:p-6">{(error || audioPlayback.error) && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error || audioPlayback.error}</p>}{!form&&!error&&<p className="p-6 text-sm">Loading consent form...</p>}
+      {creating&&form&&t&&canCreate?<>
+        <div className="mx-auto mb-4 flex max-w-[780px] flex-wrap items-center justify-between gap-3 text-xs"><span className="font-semibold text-teal-800">{reviewing?(language==="en"?"2 · Review & sign":"2 · समीक्षा और हस्ताक्षर"):(language==="en"?"1 · Fill in details & tick your choices":"1 · विवरण भरें और विकल्प चुनें")}</span><label className="flex items-center gap-2">{language==="en"?"Department":"विभाग"}<select disabled={reviewing||busy} aria-label="Department" value={departmentId} onChange={e=>setDepartmentId(e.target.value)} className="max-w-52 rounded-lg border border-slate-300 bg-white p-2"><option value="">{language==="en"?"Select department":"विभाग चुनें"}</option>{departments.map(row=><option key={row.id} value={row.id}>{row.name}</option>)}</select></label></div>
+        <div className="mx-auto max-w-[780px] rounded-sm border border-slate-200 bg-white p-5 shadow-sm sm:p-10"><DemoConsentPaper key={`draft-${signatureVersion}`} form={form} language={language} onField={reviewing?undefined:field} onChoice={reviewing?undefined:choice} onSignature={reviewing&&!busy?signature:undefined} signatureVersion={signatureVersion} />
+          <div className="mt-7 border-t border-slate-200 pt-5">{reviewing?<><label className="flex items-start gap-3 text-sm leading-6"><input type="checkbox" checked={confirmed} disabled={busy} onChange={e=>setConfirmed(e.target.checked)} className="mt-1 h-4 w-4 accent-teal-700" />{t.confirmation}</label><div className="mt-4 flex flex-wrap gap-4"><button type="button" disabled={busy||!ready||!confirmed||!form.patient_signature||!form.clinician_signature||!witnessValid} onClick={()=>void save()} className="rounded-lg bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy?(language==="en"?"Saving...":"सहेज रहे हैं..."):t.save}</button><button type="button" disabled={busy} onClick={()=>{stopAudio();resetSignatures();setReviewing(false);}} className="text-sm text-teal-800 underline">{language==="en"?"Edit details & sign again":"विवरण बदलें और फिर हस्ताक्षर करें"}</button></div></>:<><p className="mb-3 text-xs text-slate-500">{language==="en"?"Complete the starred fields, choose a department, and tick one option in each consent section. Names and other details can be handwritten.":"तारांकित विवरण भरें, विभाग चुनें और दोनों सहमति अनुभागों में एक-एक विकल्प चुनें। नाम और अन्य विवरण हाथ से लिखे जा सकते हैं।"}</p><button type="button" disabled={!ready} onClick={()=>{stopAudio();setReviewing(true);resetSignatures();}} className="rounded-lg bg-teal-700 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{language==="en"?"Continue to signatures":"हस्ताक्षर करें"}</button></>}</div>
+        </div></>:!creating&&<div className="mx-auto max-w-[780px] space-y-4">{!consents.length&&<p className="rounded-lg bg-white p-6 text-sm text-slate-500">{language==="en"?"No signed forms yet.":"अभी कोई हस्ताक्षरित पत्र नहीं है।"}</p>}{consents.map(row=><article key={row.id} className="rounded-lg border border-slate-200 bg-white p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-bold">{row.form.demo?(row.form.demo.template.version === "demo-consent-v1" ? "Historical demo consent" : "Patient consent · Data sharing & procedure"):row.form.procedure[language]}</h3><p className="mt-1 text-xs text-slate-500">{row.department_name} · {new Date(row.signed_at).toLocaleString()} {row.withdrawn_at&&"· Withdrawn"}</p></div><button type="button" onClick={()=>{stopAudio();if(!row.form.demo)setLegacy(true);else setExpanded(expanded===row.id?null:row.id);}} className="text-sm font-semibold text-teal-700">{expanded===row.id?"Hide form":"View signed form"}</button></div>{expanded===row.id&&row.form.demo&&<div className="mt-6 border-t pt-6"><DemoConsentPaper form={row.form.demo} language={language} saved /></div>}{row.withdrawn_at&&<p className="mt-3 text-sm text-red-700">Withdrawal: {row.withdrawal_reason}</p>}{canCreate&&!row.withdrawn_at&&row.form.decision==="accepted"&&<button type="button" className="mt-3 text-xs text-red-700 underline" onClick={()=>setWithdrawId(row.id)}>Record withdrawal</button>}{withdrawId===row.id&&<div className="mt-3 flex flex-wrap gap-3"><input aria-label="Withdrawal reason" value={reason} maxLength={2000} onChange={e=>setReason(e.target.value)} className="rounded border p-2 text-sm" placeholder="Reason for withdrawal" /><button type="button" disabled={busy||reason.trim().length<3} onClick={()=>void withdraw()} className="text-sm text-red-700 disabled:opacity-40">Confirm withdrawal</button><button type="button" onClick={()=>setWithdrawId(null)} className="text-sm">Cancel</button></div>}</article>)}</div>}
+    </div>
+  </ClinicalDialog>;
 }

@@ -167,7 +167,9 @@ export async function fetchClinicalHospitalCode(
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
-    signal,
+    signal: signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(12000)])
+      : AbortSignal.timeout(12000),
   });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
